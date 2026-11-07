@@ -54,16 +54,13 @@ const maxMessage = 600
 
 func blockMessage(subject string, v policy.Verdict) string {
 	msg, sep := "pkgwarden blocked "+subject, ": "
-	for i, f := range v.Findings {
-		if f.Decision < v.Decision {
-			continue
-		}
-		part := string(f.Rule) + ": " + f.Reason
+	parts := decisive(v)
+	for i, part := range parts {
 		if len(part) > 160 {
 			part = strings.ToValidUTF8(part[:157], "") + "..."
 		}
 		if len(msg)+len(sep)+len(part) > maxMessage-60 {
-			return msg + fmt.Sprintf("%sand %d more, see /api/v1/check", sep, len(v.Findings)-i)
+			return msg + fmt.Sprintf("%sand %d more, see /api/v1/check", sep, len(parts)-i)
 		}
 		msg += sep + part
 		sep = "; "
@@ -72,13 +69,18 @@ func blockMessage(subject string, v policy.Verdict) string {
 }
 
 func reasons(v policy.Verdict) string {
+	return strings.Join(decisive(v), "; ")
+}
+
+// decisive describes the findings that set the verdict's decision.
+func decisive(v policy.Verdict) []string {
 	var parts []string
 	for _, f := range v.Findings {
 		if f.Decision >= v.Decision {
 			parts = append(parts, string(f.Rule)+": "+f.Reason)
 		}
 	}
-	return strings.Join(parts, "; ")
+	return parts
 }
 
 // BaseURL returns the externally visible URL of the proxy, without a
