@@ -57,7 +57,7 @@ func TestGHSALookupNpm(t *testing.T) {
 		t.Fatalf("got %d advisories, want 1", len(advs))
 	}
 	a := advs[0]
-	if a.ID != "GHSA-mh6f-8j2x-4483" || a.Source != "ghsa" || a.Severity != "CRITICAL" || a.Kind != Vulnerability ||
+	if a.ID != "GHSA-mh6f-8j2x-4483" || a.Source != "ghsa" || a.Severity != SeverityCritical || a.Kind != Vulnerability ||
 		a.URL != "https://github.com/advisories/GHSA-mh6f-8j2x-4483" || len(a.Aliases) != 0 {
 		t.Errorf("unexpected advisory %+v", a)
 	}
@@ -81,7 +81,7 @@ func TestGHSALookupPyPIWithoutToken(t *testing.T) {
 	}
 	// The fixture spells this package "Jinja2"; names match after normalization.
 	a := byID(t, advs, "GHSA-h75v-3vvj-5mfj")
-	if a.Severity != "MEDIUM" || !slices.Equal(a.Aliases, []string{"CVE-2024-34064"}) {
+	if a.Severity != SeverityMedium || !slices.Equal(a.Aliases, []string{"CVE-2024-34064"}) {
 		t.Errorf("unexpected advisory %+v", a)
 	}
 	checkAffects(t, a, []string{"2.0", "3.1.3"}, []string{"3.1.4", "3.2.0"})
@@ -116,8 +116,8 @@ func TestGHSAVulnerableVersionRange(t *testing.T) {
 			if len(advs) != 1 {
 				t.Fatalf("got %d advisories, want 1", len(advs))
 			}
-			if advs[0].Severity != "MEDIUM" {
-				t.Errorf("severity = %q, want MEDIUM", advs[0].Severity)
+			if advs[0].Severity != SeverityMedium {
+				t.Errorf("severity = %v, want MEDIUM", advs[0].Severity)
 			}
 			checkAffects(t, advs[0], tt.affected, tt.safe)
 		})

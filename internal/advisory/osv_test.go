@@ -83,7 +83,7 @@ func TestOSVLookupNpm(t *testing.T) {
 		t.Fatalf("got %d advisories, want 1", len(advs))
 	}
 	a := advs[0]
-	if a.ID != "GHSA-mh6f-8j2x-4483" || a.Source != "osv" || a.Severity != "CRITICAL" ||
+	if a.ID != "GHSA-mh6f-8j2x-4483" || a.Source != "osv" || a.Severity != SeverityCritical ||
 		a.URL != "https://osv.dev/vulnerability/GHSA-mh6f-8j2x-4483" || a.Ecosystem != ecosystem.Npm ||
 		a.Summary != "Critical severity vulnerability that affects event-stream and flatmap-stream" {
 		t.Errorf("unexpected advisory %+v", a)
@@ -107,7 +107,7 @@ func TestOSVLookupPyPI(t *testing.T) {
 	}
 
 	moderate := byID(t, advs, "GHSA-gmj6-6f8f-6699")
-	if moderate.Severity != "MEDIUM" || !slices.Contains(moderate.Aliases, "CVE-2024-56201") {
+	if moderate.Severity != SeverityMedium || !slices.Contains(moderate.Aliases, "CVE-2024-56201") {
 		t.Errorf("unexpected advisory %+v", moderate)
 	}
 	checkAffects(t, moderate, []string{"3.0.0", "3.1.4"}, []string{"2.11.3", "3.1.5"})
@@ -115,8 +115,8 @@ func TestOSVLookupPyPI(t *testing.T) {
 	// PYSEC-2014-82 pairs a GIT range ending at a commit hash with an
 	// ECOSYSTEM range; only the latter describes releases.
 	pysec := byID(t, advs, "PYSEC-2014-82")
-	if pysec.Severity != "" {
-		t.Errorf("PYSEC severity = %q, want empty", pysec.Severity)
+	if pysec.Severity != SeverityUnknown {
+		t.Errorf("PYSEC severity = %v, want unknown", pysec.Severity)
 	}
 	checkAffects(t, pysec, []string{"2.7.2", "2.0"}, []string{"2.7.3", "2.8", "3.0.0"})
 }
@@ -128,7 +128,7 @@ func TestOSVLastAffected(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := byID(t, advs, "GHSA-c2m4-w5hm-vqjw")
-	if a.Kind != Vulnerability || a.Severity != "HIGH" {
+	if a.Kind != Vulnerability || a.Severity != SeverityHigh {
 		t.Errorf("unexpected advisory %+v", a)
 	}
 	checkAffects(t, a, []string{"0.0.1", "1.0.1"}, []string{"1.0.2"})
@@ -168,7 +168,7 @@ func TestOSVRecordMapping(t *testing.T) {
 	checkAffects(t, advs[1], []string{"1.2.3"}, nil)
 
 	long := advs[2]
-	if want := strings.Repeat("x", 200) + "..."; long.Summary != want || long.Severity != "" || long.Kind != Vulnerability {
+	if want := strings.Repeat("x", 200) + "..."; long.Summary != want || long.Severity != SeverityUnknown || long.Kind != Vulnerability {
 		t.Errorf("unexpected advisory %+v", long)
 	}
 }
@@ -208,5 +208,46 @@ func TestOSVHTTPError(t *testing.T) {
 	_, err := NewOSV(srv.Client(), srv.URL).Lookup(context.Background(), ecosystem.Npm, "x")
 	if err == nil || !strings.Contains(err.Error(), "503") {
 		t.Errorf("err = %v, want a 503 error", err)
+	}
+}
+
+func TestOSVSeverity(t *testing.T) {
+	const (
+		critical = `{"type":"CVSS_V3","score":"CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"}`
+		high     = `{"type":"CVSS_V3","score":"CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H"}`
+		medium   = `{"type":"CVSS_V3","score":"CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:L/I:L/A:N"}`
+		v4       = `{"type":"CVSS_V4","score":"CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N"}`
+	)
+	tests := []struct {
+		name   string
+		fields string
+		want   Severity
+	}{
+		{"database rating wins over the vector", `"database_specific":{"severity":"MODERATE"},"severity":[` + critical + `]`, SeverityMedium},
+		{"vector used without a database rating", `"severity":[` + critical + `]`, SeverityCritical},
+		{"vector used when the database rating is unknown", `"database_specific":{"severity":"UNKNOWN"},"severity":[` + high + `]`, SeverityHigh},
+		{"vector used when the database rating is not a string", `"database_specific":{"severity":7},"severity":[` + medium + `]`, SeverityMedium},
+		{"highest vector wins", `"severity":[` + medium + `,` + high + `]`, SeverityHigh},
+		{"junk entries skipped", `"severity":[42,"CVSS:3.1/AV:N",{"score":7},` + v4 + `,{"type":"CVSS_V3","score":"CVSS:3.1/AV:N"},` + medium + `]`, SeverityMedium},
+		{"v4 only is unrated", `"severity":[` + v4 + `]`, SeverityUnknown},
+		{"severity that is not a list is unrated", `"severity":"HIGH"`, SeverityUnknown},
+		{"no rating at all", ``, SeverityUnknown},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fields := tt.fields
+			if fields != "" {
+				fields += ","
+			}
+			body := `{"vulns":[{"id":"GHSA-xxxx-yyyy-zzzz",` + fields + `"affected":[{"package":{"name":"p","ecosystem":"npm"}}]}]}`
+			src, _ := osvServer(t, func(osvQuery) string { return body })
+			advs, err := src.Lookup(context.Background(), ecosystem.Npm, "p")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(advs) != 1 || advs[0].Severity != tt.want {
+				t.Errorf("advisories = %+v, want one rated %v", advs, tt.want)
+			}
+		})
 	}
 }

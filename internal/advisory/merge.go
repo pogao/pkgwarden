@@ -72,8 +72,9 @@ func dedupe(advs []Advisory) []Advisory {
 
 // combine folds duplicates into one advisory. The entry it keeps is the
 // first malicious one, else the first; the others contribute their IDs,
-// sources and affected releases. It never mutates the inputs, which may be
-// shared with a cache.
+// sources and affected releases. Severity is the highest any member reports,
+// so blocking does not depend on which source answered first. It never
+// mutates the inputs, which may be shared with a cache.
 func combine(group []Advisory) Advisory {
 	base := group[0]
 	if i := slices.IndexFunc(group, func(a Advisory) bool { return a.Kind == Malicious }); i >= 0 {
@@ -95,7 +96,7 @@ func combine(group []Advisory) Advisory {
 			}
 		}
 		out.Summary = cmp.Or(out.Summary, a.Summary)
-		out.Severity = cmp.Or(out.Severity, a.Severity)
+		out.Severity = max(out.Severity, a.Severity)
 		out.URL = cmp.Or(out.URL, a.URL)
 		if len(a.Versions) == 0 && len(a.Ranges) == 0 {
 			affectsAll = true

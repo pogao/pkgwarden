@@ -54,14 +54,15 @@ type osvResponse struct {
 }
 
 type osvVuln struct {
-	ID               string   `json:"id"`
-	Aliases          []string `json:"aliases"`
-	Summary          string   `json:"summary"`
-	Details          string   `json:"details"`
-	Withdrawn        string   `json:"withdrawn"`
+	ID        string   `json:"id"`
+	Aliases   []string `json:"aliases"`
+	Summary   string   `json:"summary"`
+	Details   string   `json:"details"`
+	Withdrawn string   `json:"withdrawn"`
+	// Severity and database_specific.severity stay raw so a malformed
+	// rating degrades to unknown instead of failing the whole record.
+	Severity         json.RawMessage `json:"severity"`
 	DatabaseSpecific struct {
-		// Raw because database_specific is free-form and a non-string
-		// severity must not fail the whole record.
 		Severity json.RawMessage `json:"severity"`
 	} `json:"database_specific"`
 	Affected []osvAffected `json:"affected"`
@@ -135,7 +136,7 @@ func osvAdvisory(v *osvVuln, eco ecosystem.Ecosystem, name string) (Advisory, bo
 		ID:        v.ID,
 		Aliases:   slices.Clone(v.Aliases),
 		Summary:   summarize(v.Summary, v.Details),
-		Severity:  osvSeverity(v.DatabaseSpecific.Severity),
+		Severity:  osvSeverity(v),
 		URL:       "https://osv.dev/vulnerability/" + v.ID,
 		Ecosystem: eco,
 	}
@@ -185,24 +186,29 @@ func osvAdvisory(v *osvVuln, eco ecosystem.Ecosystem, name string) (Advisory, bo
 
 func isMAL(id string) bool { return strings.HasPrefix(id, "MAL-") }
 
-func osvSeverity(raw json.RawMessage) string {
-	var s string
-	if json.Unmarshal(raw, &s) != nil {
-		return ""
+// osvSeverity prefers the database's own rating and falls back to the
+// highest CVSS v3 vector in the record's severity list.
+func osvSeverity(v *osvVuln) Severity {
+	var rating string
+	if json.Unmarshal(v.DatabaseSpecific.Severity, &rating) == nil {
+		if s := ParseSeverity(rating); s != SeverityUnknown {
+			return s
+		}
 	}
-	return normalizeSeverity(s)
-}
-
-// normalizeSeverity maps database ratings onto the CVSS names. GitHub calls
-// MEDIUM "moderate".
-func normalizeSeverity(s string) string {
-	switch s = strings.ToUpper(strings.TrimSpace(s)); s {
-	case "MODERATE":
-		return "MEDIUM"
-	case "LOW", "MEDIUM", "HIGH", "CRITICAL":
-		return s
+	var entries []json.RawMessage
+	if json.Unmarshal(v.Severity, &entries) != nil {
+		return SeverityUnknown
 	}
-	return ""
+	best := SeverityUnknown
+	for _, raw := range entries {
+		var e struct {
+			Score string `json:"score"`
+		}
+		if json.Unmarshal(raw, &e) == nil {
+			best = max(best, cvss3Severity(e.Score))
+		}
+	}
+	return best
 }
 
 func summarize(summary, details string) string {

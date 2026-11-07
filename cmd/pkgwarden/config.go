@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pogao/pkgwarden/internal/advisory"
 	"github.com/pogao/pkgwarden/internal/ecosystem"
 	"github.com/pogao/pkgwarden/internal/policy"
 )
@@ -31,9 +32,10 @@ type config struct {
 // underscores). Command-line flags win over the environment.
 func parseConfig(args []string) (*config, error) {
 	var (
-		c     config
-		allow string
-		h     = &c.policy.Heuristics
+		c             config
+		allow         string
+		blockSeverity string
+		h             = &c.policy.Heuristics
 	)
 	fs := flag.NewFlagSet("pkgwarden", flag.ContinueOnError)
 	fs.StringVar(&c.listen, "listen", ":8080", "address to listen on")
@@ -43,7 +45,7 @@ func parseConfig(args []string) (*config, error) {
 	fs.StringVar(&c.logLevel, "log-level", "info", "debug, info, warn or error")
 
 	fs.DurationVar(&c.policy.Cooldown, "cooldown", 7*24*time.Hour, "minimum age of a release before it is served (0 disables)")
-	fs.BoolVar(&c.policy.BlockVulnerabilities, "block-vulnerabilities", true, "block releases with known vulnerabilities (malicious releases are always blocked)")
+	fs.StringVar(&blockSeverity, "block-severity", "high", "lowest vulnerability rating that blocks a release: low, medium, high, critical or none (lower and unrated ones warn; malicious releases always block)")
 	fs.BoolVar(&c.policy.FailOpen, "fail-open", false, "serve packages when advisory sources are unreachable")
 	fs.StringVar(&allow, "allow", "", "comma-separated ecosystem:name packages exempt from every check, e.g. npm:my-internal-lib")
 
@@ -78,6 +80,9 @@ func parseConfig(args []string) (*config, error) {
 	if c.policy.Allow, err = parseAllow(allow); err != nil {
 		return nil, err
 	}
+	if c.policy.BlockSeverity, err = parseBlockSeverity(blockSeverity); err != nil {
+		return nil, err
+	}
 	if h.WarnScore > h.BlockScore {
 		return nil, fmt.Errorf("-heuristics-warn (%d) must not exceed -heuristics-block (%d)", h.WarnScore, h.BlockScore)
 	}
@@ -85,6 +90,22 @@ func parseConfig(args []string) (*config, error) {
 		return nil, fmt.Errorf("-cooldown must not be negative")
 	}
 	return &c, nil
+}
+
+var blockSeverities = map[string]advisory.Severity{
+	"none":     advisory.SeverityUnknown,
+	"low":      advisory.SeverityLow,
+	"medium":   advisory.SeverityMedium,
+	"high":     advisory.SeverityHigh,
+	"critical": advisory.SeverityCritical,
+}
+
+func parseBlockSeverity(s string) (advisory.Severity, error) {
+	sev, ok := blockSeverities[strings.ToLower(strings.TrimSpace(s))]
+	if !ok {
+		return 0, fmt.Errorf("-block-severity %q: want low, medium, high, critical or none", s)
+	}
+	return sev, nil
 }
 
 func parseAllow(s string) (map[ecosystem.Ecosystem][]string, error) {

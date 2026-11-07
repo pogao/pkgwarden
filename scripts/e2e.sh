@@ -89,6 +89,10 @@ import json, urllib.request
 r = urllib.request.Request('$url/pypi/simple/requests/', headers={'Accept': 'application/vnd.pypi.simple.v1+json'})
 d = json.load(urllib.request.urlopen(r))
 assert d['files'] and d['files'][0]['url'].startswith('$url/pypi/files/'), d['files'][:1]"
+expect_ok "pip download requests==2.31.0 (medium only, warns)" client python:3.13-slim \
+	pip download -q --no-deps -d /tmp/d --trusted-host pkgwarden --index-url "$url/pypi/simple/" requests==2.31.0
+expect_ok "check API rates requests 2.31.0 as warn" sh -c \
+	"curl -s '$host/api/v1/check?ecosystem=pypi&name=requests&version=2.31.0' | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d); assert d[\"decision\"] == \"warn\"'"
 expect_refused "pip download urllib3==1.24.1 (vulnerable)" "No matching distribution|403" client python:3.13-slim \
 	pip download -q --no-deps -d /tmp/d --trusted-host pkgwarden --index-url "$url/pypi/simple/" urllib3==1.24.1
 expect_403 "pypi file urllib3 1.24.1 names the advisory" \

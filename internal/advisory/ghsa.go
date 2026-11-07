@@ -141,7 +141,7 @@ func ghsaToAdvisory(g *ghsaAdvisory, eco ecosystem.Ecosystem, name string) (Advi
 		ID:        g.GHSAID,
 		Source:    "ghsa",
 		Summary:   summarize(g.Summary, g.Description),
-		Severity:  normalizeSeverity(g.Severity),
+		Severity:  ParseSeverity(g.Severity),
 		URL:       g.HTMLURL,
 		Ecosystem: eco,
 	}

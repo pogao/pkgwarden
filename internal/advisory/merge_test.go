@@ -33,7 +33,7 @@ func TestMergeDeduplicates(t *testing.T) {
 	osv := osvResults()
 	ghsa := []Advisory{
 		{ID: "GHSA-aaaa", Aliases: []string{"CVE-2024-1"}, Source: "ghsa", Ecosystem: ecosystem.PyPI,
-			Severity: "HIGH", Versions: []string{"2.0"}},
+			Severity: SeverityHigh, Versions: []string{"2.0"}},
 	}
 	openssf := []Advisory{
 		{ID: "MAL-2024-3", Aliases: []string{"PYSEC-2024-7"}, Source: "openssf", Kind: Malicious, Ecosystem: ecosystem.PyPI,
@@ -48,7 +48,7 @@ func TestMergeDeduplicates(t *testing.T) {
 		t.Fatalf("got %d advisories, want 2: %+v", len(advs), advs)
 	}
 	a := byID(t, advs, "MAL-2024-3")
-	if a.Kind != Malicious || a.Source != "osv+ghsa+openssf" || a.Severity != "HIGH" || a.Summary != "from osv" {
+	if a.Kind != Malicious || a.Source != "osv+ghsa+openssf" || a.Severity != SeverityHigh || a.Summary != "from osv" {
 		t.Errorf("unexpected merged advisory %+v", a)
 	}
 	slices.Sort(a.Aliases)
@@ -89,5 +89,32 @@ func TestMergePartialFailure(t *testing.T) {
 	}
 	if len(advs) != 1 || advs[0].ID != "OSV-1" {
 		t.Errorf("advisories = %+v, want the healthy source's results", advs)
+	}
+}
+
+func TestMergeTakesHighestSeverity(t *testing.T) {
+	tests := []struct {
+		name          string
+		first, second Severity
+		want          Severity
+	}{
+		{"later source rates higher", SeverityMedium, SeverityHigh, SeverityHigh},
+		{"first source rates higher", SeverityCritical, SeverityLow, SeverityCritical},
+		{"first source unrated", SeverityUnknown, SeverityMedium, SeverityMedium},
+		{"both unrated", SeverityUnknown, SeverityUnknown, SeverityUnknown},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			advs, err := Merge(
+				fixed([]Advisory{{ID: "GHSA-aaaa", Aliases: []string{"CVE-2024-1"}, Source: "osv", Severity: tt.first}}, nil),
+				fixed([]Advisory{{ID: "CVE-2024-1", Source: "ghsa", Severity: tt.second}}, nil),
+			).Lookup(context.Background(), ecosystem.Npm, "p")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(advs) != 1 || advs[0].Severity != tt.want {
+				t.Errorf("merged = %+v, want one advisory rated %v", advs, tt.want)
+			}
+		})
 	}
 }

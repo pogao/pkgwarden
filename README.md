@@ -6,7 +6,7 @@ Package managers keep working normally through it. pkgwarden removes blocked ver
 
 ```
 npm error code E403
-npm error 403 403 Forbidden - GET http://localhost:8080/npm/lodash/-/lodash-4.17.20.tgz - pkgwarden blocked npm/lodash@4.17.20: advisory: GHSA-29mw-wpgm-hmr9 (medium vulnerability, via osv): Regular Expression Denial of Service (ReDoS) in lodash https://osv.dev/vulnerability/GHSA-29mw...; advisory: GHSA-35jh-r3h4-6jhm (high vulnerability, via osv): Command Injection in lodash https://osv.dev/vulnerability/GHSA-35jh-r3h4-6jhm; ... and 3 more, see /api/v1/check
+npm error 403 403 Forbidden - GET http://localhost:8080/npm/lodash/-/lodash-4.17.20.tgz - pkgwarden blocked npm/lodash@4.17.20: advisory: GHSA-35jh-r3h4-6jhm (high vulnerability, via osv): Command Injection in lodash https://osv.dev/vulnerability/GHSA-35jh-r3h4-6jhm
 ```
 
 ## What it checks
@@ -15,7 +15,7 @@ npm error 403 403 Forbidden - GET http://localhost:8080/npm/lodash/-/lodash-4.17
 | --- | --- | --- |
 | Cooldown | 7 days | Releases younger than the cooldown are hidden. A release with no known publish time is blocked. |
 | Malicious packages | always on | Releases listed as malicious (OSV `MAL-` entries, GHSA `malware`, the OpenSSF malicious-packages dataset) are blocked. |
-| Known vulnerabilities | block | Releases inside an advisory's affected range are blocked. Set `-block-vulnerabilities=false` to warn instead. |
+| Known vulnerabilities | block at high | Releases inside an advisory's affected range are blocked when the vulnerability is rated high or critical. Medium, low, and unrated ones warn. `-block-severity` sets the threshold. |
 | Heuristics | on | Suspicious signals add to a score. A score of 30 warns and 70 blocks. |
 
 The heuristic signals and their weights:
@@ -38,7 +38,9 @@ A warning does not stop the download. pkgwarden logs it and sends it in the `X-P
 - The GitHub Advisory Database is also queried directly when `GITHUB_TOKEN` (or `-ghsa-token`) is set.
 - The OpenSSF malicious-packages dataset is synced to a local index when `-openssf` is set. Each refresh downloads about 300 MB, so it is off by default.
 
-pkgwarden merges entries from all sources by ID and alias, and caches each lookup for `-advisory-ttl` (1 hour). If a source cannot be reached, the package is blocked, unless you set `-fail-open`.
+A vulnerability's rating comes from the database's own rating. When a record has none, pkgwarden computes the base score of its CVSS v3 vector. A record with neither is unrated.
+
+pkgwarden merges entries from all sources by ID and alias, and keeps the highest rating any of them gives. It caches each lookup for `-advisory-ttl` (1 hour). If a source cannot be reached, the package is blocked, unless you set `-fail-open`.
 
 ## Run it
 
@@ -114,6 +116,11 @@ curl 'http://localhost:8080/api/v1/check?ecosystem=npm&name=lodash&version=4.17.
     {
       "rule": "advisory",
       "decision": "block",
+      "reason": "GHSA-35jh-r3h4-6jhm (high vulnerability, via osv): Command Injection in lodash https://osv.dev/vulnerability/GHSA-35jh-r3h4-6jhm"
+    },
+    {
+      "rule": "advisory",
+      "decision": "warn",
       "reason": "GHSA-29mw-wpgm-hmr9 (medium vulnerability, via osv): Regular Expression Denial of Service (ReDoS) in lodash https://osv.dev/vulnerability/GHSA-29mw-wpgm-hmr9"
     },
     ...
@@ -132,7 +139,7 @@ Every flag can also be set with an environment variable named `PKGWARDEN_<FLAG>`
 | `-listen` | `:8080` | Address to listen on. |
 | `-public-url` | derived per request | External base URL used in rewritten download links. |
 | `-cooldown` | `168h` | Minimum release age. `0` turns it off. |
-| `-block-vulnerabilities` | `true` | Block vulnerable releases. When `false`, they only warn. |
+| `-block-severity` | `high` | Lowest vulnerability rating that blocks: `low`, `medium`, `high`, `critical`, or `none`. Lower-rated and unrated vulnerabilities warn. `none` never blocks for vulnerabilities. Malicious releases always block. |
 | `-fail-open` | `false` | Serve packages when advisory sources are unreachable. |
 | `-allow` | empty | Comma-separated `ecosystem:name` packages exempt from every check, such as `npm:my-internal-lib`. |
 | `-heuristics` | `true` | Score heuristic signals. |
