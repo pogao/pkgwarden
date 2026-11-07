@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 	"time"
@@ -17,7 +18,7 @@ type config struct {
 	publicURL   string
 	metadataTTL time.Duration
 	advisoryTTL time.Duration
-	logLevel    string
+	logLevel    slog.Level
 
 	osvURL         string
 	ghsaToken      string
@@ -29,7 +30,8 @@ type config struct {
 
 // parseConfig reads flags, each of which can also be set through an
 // environment variable named PKGWARDEN_<FLAG> (upper case, dashes as
-// underscores). Command-line flags win over the environment.
+// underscores). Command-line flags win over the environment. -ghsa-token
+// falls back to GITHUB_TOKEN when neither sets it.
 func parseConfig(args []string) (*config, error) {
 	var (
 		c             config
@@ -42,7 +44,7 @@ func parseConfig(args []string) (*config, error) {
 	fs.StringVar(&c.publicURL, "public-url", "", "externally visible base URL, used in rewritten download links (default: derived from each request)")
 	fs.DurationVar(&c.metadataTTL, "metadata-ttl", 5*time.Minute, "how long upstream metadata is cached")
 	fs.DurationVar(&c.advisoryTTL, "advisory-ttl", time.Hour, "how long advisory lookups are cached")
-	fs.StringVar(&c.logLevel, "log-level", "info", "debug, info, warn or error")
+	fs.TextVar(&c.logLevel, "log-level", slog.LevelInfo, "debug, info, warn or error")
 
 	fs.DurationVar(&c.policy.Cooldown, "cooldown", 7*24*time.Hour, "minimum age of a release before it is served (0 disables)")
 	fs.StringVar(&blockSeverity, "block-severity", "high", "lowest vulnerability rating that blocks a release: low, medium, high, critical or none (lower and unrated ones warn; malicious releases always block)")
@@ -56,7 +58,7 @@ func parseConfig(args []string) (*config, error) {
 	fs.IntVar(&h.BlockScore, "heuristics-block", 70, "heuristic score at which a release is blocked")
 
 	fs.StringVar(&c.osvURL, "osv-url", "https://api.osv.dev", "OSV API base URL")
-	fs.StringVar(&c.ghsaToken, "ghsa-token", os.Getenv("GITHUB_TOKEN"), "GitHub token; enables direct GitHub Advisory Database lookups (default $GITHUB_TOKEN)")
+	fs.StringVar(&c.ghsaToken, "ghsa-token", "", "GitHub token; enables direct GitHub Advisory Database lookups (default $GITHUB_TOKEN)")
 	fs.BoolVar(&c.openSSF, "openssf", false, "sync the OpenSSF malicious-packages dataset locally (about 300 MB download per refresh)")
 	fs.DurationVar(&c.openSSFRefresh, "openssf-refresh", 6*time.Hour, "how often the OpenSSF dataset is refreshed")
 
@@ -64,7 +66,7 @@ func parseConfig(args []string) (*config, error) {
 	fs.VisitAll(func(f *flag.Flag) {
 		key := "PKGWARDEN_" + strings.ToUpper(strings.ReplaceAll(f.Name, "-", "_"))
 		if v, ok := os.LookupEnv(key); ok && envErr == nil {
-			if err := f.Value.Set(v); err != nil {
+			if err := fs.Set(f.Name, v); err != nil {
 				envErr = fmt.Errorf("%s: %w", key, err)
 			}
 		}
@@ -74,6 +76,11 @@ func parseConfig(args []string) (*config, error) {
 	}
 	if err := fs.Parse(args); err != nil {
 		return nil, err
+	}
+	tokenSet := false
+	fs.Visit(func(f *flag.Flag) { tokenSet = tokenSet || f.Name == "ghsa-token" })
+	if !tokenSet {
+		c.ghsaToken = os.Getenv("GITHUB_TOKEN")
 	}
 
 	var err error

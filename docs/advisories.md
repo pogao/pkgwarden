@@ -155,10 +155,11 @@ The dataset goes through these states:
 2. Until the first download and parse succeed, every OpenSSF lookup fails with `openssf lookup: dataset not loaded yet`. Every package therefore gets an `advisory-lookup` block, or a warning with `-fail-open`.
 3. After the first load, lookups read the index and never touch the network.
 4. Every `-openssf-refresh` (default `6h`), pkgwarden downloads the archive again. It replaces the index only after the new archive parses completely. If a refresh fails, the previous index stays in use and pkgwarden logs `advisory dataset refresh failed`.
+5. After a failed download or parse, pkgwarden retries after 30 seconds. Each further failure doubles the wait, up to `-openssf-refresh`. The first success returns it to the `-openssf-refresh` schedule.
 
 A `-openssf-refresh` of `0` or less loads the dataset once and never refreshes it.
 
-If the first load fails, lookups keep failing until the next refresh succeeds. With the default settings, that is 6 hours of blocked installs. Watch for `advisory dataset refresh failed` after you turn this source on.
+If the first load fails, lookups keep failing, and every package stays blocked, until a retry succeeds. With the default settings, the waits between attempts are 30 seconds, 1 minute, 2 minutes, and so on, and never more than 6 hours. Watch for `advisory dataset refresh failed` after you turn this source on.
 
 On one test run on 2026-11-07, the first load finished about 11 seconds after startup, and the process then used about 230 MB of resident memory. That is a single measurement on one machine and network.
 

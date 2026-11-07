@@ -152,14 +152,14 @@ The subject is `<ecosystem>/<name>` for a package-level block and `<ecosystem>/<
 pkgwarden keeps the message short, because the go command replaces a longer body with `[Truncated: too long.]`.
 
 - Each `<rule>: <reason>` part longer than 160 bytes is cut to 157 bytes and ends with `...`.
-- When the next part would take the message past 540 bytes, pkgwarden stops and appends `and <N> more, see /api/v1/check`. N counts every finding not yet listed, including `warn` findings that the message would not have listed.
+- When the next part would take the message past 540 bytes, pkgwarden stops and appends `and <N> more, see /api/v1/check`. N counts the `block` findings not yet listed. It leaves out `warn` findings, which the message never lists.
 
 This body was captured on 2026-11-07:
 
 	$ curl -s http://127.0.0.1:18181/rubygems/gems/rack-2.2.3.gem
-	pkgwarden blocked rubygems/rack@2.2.3: advisory: GHSA-3h57-hmj3-gj3p (high vulnerability, via osv): Rack has possible DoS Vulnerability in Multipart MIME parsing https://osv.dev/vulnerability/GHSA...; advisory: GHSA-625h-95r8-8xpm (high vulnerability, via osv): Rack has an unsafe default in Rack::QueryParser allows params_limit bypass via semicolon-separat...; advisory: GHSA-65f5-mfpf-vfhj (high vulnerability, via osv): Denial of service via header parsing in Rack https://osv.dev/vulnerability/GHSA-65f5-mfpf-vfhj; and 27 more, see /api/v1/check
+	pkgwarden blocked rubygems/rack@2.2.3: advisory: GHSA-3h57-hmj3-gj3p (high vulnerability, via osv): Rack has possible DoS Vulnerability in Multipart MIME parsing https://osv.dev/vulnerability/GHSA...; advisory: GHSA-625h-95r8-8xpm (high vulnerability, via osv): Rack has an unsafe default in Rack::QueryParser allows params_limit bypass via semicolon-separat...; advisory: GHSA-65f5-mfpf-vfhj (high vulnerability, via osv): Denial of service via header parsing in Rack https://osv.dev/vulnerability/GHSA-65f5-mfpf-vfhj; and 12 more, see /api/v1/check
 
-The full verdict for that release had 32 findings, 15 of them `block`. The 27 counts the 12 unlisted `block` findings and the 15 `warn` findings.
+The full verdict for that release had 32 findings, 15 of them `block`. The message lists 3, so N is 12.
 
 ## Ecosystem routes
 
@@ -174,7 +174,7 @@ The upstream is `https://registry.npmjs.org`. Download counts come from `https:/
 | Route | Handling |
 | --- | --- |
 | `GET /npm/<name>`, `GET /npm/@<scope>/<name>` | Filtered packument. `@scope%2fname` also works. |
-| `GET /npm/<name>/<version-or-tag>` | One version manifest from the filtered packument. A missing version gets the 403 for that version. |
+| `GET /npm/<name>/<version-or-tag>` | One version manifest from the filtered packument. A missing version gets the 403 for that version. A dist-tag that filtering removed gets the 403 for the version the tag points at upstream. |
 | `GET /npm/<name>/-/<file>.tgz` | Enforced tarball. The version comes from the file name. |
 | `POST /npm/-/npm/v1/security/advisories/bulk`, `POST /npm/-/npm/v1/security/audits/quick` | Passed through, for `npm audit`. |
 | Any other `GET` | Passed through, with only the `Accept` header and the query string. |

@@ -49,7 +49,8 @@ func fakeRegistry(t *testing.T) *httptest.Server {
 		switch {
 		case r.Method == http.MethodPost:
 			body, _ := io.ReadAll(r.Body)
-			json.NewEncoder(w).Encode(map[string]string{"path": p, "contentType": r.Header.Get("Content-Type"), "body": string(body)})
+			json.NewEncoder(w).Encode(map[string]string{"path": p, "contentType": r.Header.Get("Content-Type"),
+				"userAgent": r.Header.Get("User-Agent"), "body": string(body)})
 		case p == "/-/v1/search":
 			w.Write([]byte(`{"objects":[],"text":"` + r.URL.Query().Get("text") + `"}`))
 		case strings.HasSuffix(p, ".tgz"):
@@ -282,6 +283,25 @@ func TestVersionManifest(t *testing.T) {
 	assertBlocked(t, resp, body, "npm/@acme/widget@1.1.0", "cooldown")
 }
 
+func TestManifestForDroppedTagGivesTargetVerdict(t *testing.T) {
+	e := newEnv(t, week, nil)
+	tests := []struct {
+		path string
+		want []string
+	}{
+		{"/npm/left-pad/next", []string{"npm/left-pad@2.0.0-rc.1", "cooldown"}},
+		{"/npm/@acme/widget/next", []string{"npm/@acme/widget@2.0.0-rc.1", "cooldown"}},
+		{"/npm/left-pad/nightly", []string{"npm/left-pad@nightly", "unknown-release"}},
+		{"/npm/left-pad/9.9.9", []string{"npm/left-pad@9.9.9", "unknown-release"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.path, func(t *testing.T) {
+			resp, body := get(t, e.proxy.URL+tt.path)
+			assertBlocked(t, resp, body, tt.want...)
+		})
+	}
+}
+
 func assertBlocked(t *testing.T, resp *http.Response, body []byte, want ...string) {
 	t.Helper()
 	if resp.StatusCode != http.StatusForbidden {
@@ -388,7 +408,7 @@ func TestPassthrough(t *testing.T) {
 		var echo map[string]string
 		json.NewDecoder(resp.Body).Decode(&echo)
 		resp.Body.Close()
-		want := map[string]string{"path": path, "contentType": "application/json", "body": `{"left-pad":["1.0.0"]}`}
+		want := map[string]string{"path": path, "contentType": "application/json", "userAgent": "pkgwarden-test", "body": `{"left-pad":["1.0.0"]}`}
 		if resp.StatusCode != http.StatusOK || !maps.Equal(echo, want) {
 			t.Errorf("POST %s: status %d upstream saw %v", path, resp.StatusCode, echo)
 		}

@@ -26,9 +26,6 @@ type Options struct {
 	PublicURL string
 	Engine    *policy.Engine
 	HTTP      *proxy.Upstream
-	// Client forwards npm audit POST requests, which Upstream cannot send.
-	// Default http.DefaultClient.
-	Client *http.Client
 }
 
 // Registry serves the npm registry protocol relative to its mount point.
@@ -44,9 +41,6 @@ func New(o Options) *Registry {
 	}
 	if o.Downloads == "" {
 		o.Downloads = "https://api.npmjs.org"
-	}
-	if o.Client == nil {
-		o.Client = http.DefaultClient
 	}
 	o.Registry = strings.TrimSuffix(o.Registry, "/")
 	o.Downloads = strings.TrimSuffix(o.Downloads, "/")
@@ -166,43 +160,44 @@ func (r *Registry) weeklyDownloads(ctx context.Context, name string) int64 {
 }
 
 func (r *Registry) servePackument(w http.ResponseWriter, req *http.Request, name string) {
-	if body, _, ok := r.filtered(w, req, name); ok {
+	if body, _, _, ok := r.filtered(w, req, name); ok {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write(body)
 	}
 }
 
-// filtered returns the packument with blocked versions removed. When it
-// returns false it has already written the response.
-func (r *Registry) filtered(w http.ResponseWriter, req *http.Request, name string) ([]byte, *policy.Assessment, bool) {
+// filtered returns the packument with blocked versions removed, along with
+// the upstream dist-tags. When it returns false it has already written the
+// response.
+func (r *Registry) filtered(w http.ResponseWriter, req *http.Request, name string) ([]byte, map[string]string, *policy.Assessment, bool) {
 	p, pkg, err := r.load(req.Context(), name)
 	if err != nil {
 		proxy.WriteError(w, err)
-		return nil, nil, false
+		return nil, nil, nil, false
 	}
 	a := r.o.Engine.Assess(req.Context(), pkg)
 	subject := "npm/" + name
 	if !proxy.Enforce(w, proxy.JSON, subject, a.Package) {
-		return nil, nil, false
+		return nil, nil, nil, false
 	}
 	tarballBase := proxy.BaseURL(req, r.o.PublicURL) + "/" + string(ecosystem.Npm)
 	body, ok, err := p.filter(a.Allowed, tarballBase, r.registryPath)
 	if err != nil {
 		proxy.WriteError(w, err)
-		return nil, nil, false
+		return nil, nil, nil, false
 	}
 	if !ok {
 		latest := p.distTags["latest"]
 		proxy.Enforce(w, proxy.JSON, subject+"@"+latest, a.Release(latest))
-		return nil, nil, false
+		return nil, nil, nil, false
 	}
-	return body, a, true
+	return body, p.distTags, a, true
 }
 
 // serveManifest answers GET /<name>/<version-or-tag> from the filtered
 // packument, so the manifest's tarball link also points at the proxy.
 func (r *Registry) serveManifest(w http.ResponseWriter, req *http.Request, rt route) {
-	body, a, ok := r.filtered(w, req, rt.name)
+	body, upstreamTags, a, ok := r.filtered(w, req, rt.name)
 	if !ok {
 		return
 	}
@@ -216,6 +211,10 @@ func (r *Registry) serveManifest(w http.ResponseWriter, req *http.Request, rt ro
 	}
 	v := rt.spec
 	if tagged, ok := doc.DistTags[v]; ok {
+		v = tagged
+	} else if tagged, ok := upstreamTags[v]; ok {
+		// Filtering dropped the tag because its target is blocked, so the
+		// 403 reports the target's verdict.
 		v = tagged
 	}
 	m, found := doc.Versions[v]
@@ -260,13 +259,7 @@ func (r *Registry) passthrough(w http.ResponseWriter, req *http.Request) {
 }
 
 func (r *Registry) forwardPost(w http.ResponseWriter, req *http.Request) {
-	up, err := http.NewRequestWithContext(req.Context(), http.MethodPost, r.upstreamURL(req), req.Body)
-	if err != nil {
-		proxy.WriteError(w, err)
-		return
-	}
-	up.Header = forwarded(req, "Accept", "Content-Type", "Content-Encoding", "User-Agent")
-	resp, err := r.o.Client.Do(up)
+	resp, err := r.o.HTTP.Post(req.Context(), r.upstreamURL(req), forwarded(req, "Accept", "Content-Type", "Content-Encoding"), req.Body)
 	if err != nil {
 		proxy.WriteError(w, err)
 		return

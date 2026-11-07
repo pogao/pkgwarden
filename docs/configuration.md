@@ -27,8 +27,8 @@ This is the output of `go run ./cmd/pkgwarden -h 2>&1` at the current commit. Th
 	    	heuristic score at which a release is served with a warning (default 30)
 	  -listen string
 	    	address to listen on (default ":8080")
-	  -log-level string
-	    	debug, info, warn or error (default "info")
+	  -log-level value
+	    	debug, info, warn or error (default INFO)
 	  -low-downloads int
 	    	weekly downloads below this count as unpopular (default 100)
 	  -metadata-ttl duration
@@ -43,8 +43,6 @@ This is the output of `go run ./cmd/pkgwarden -h 2>&1` at the current commit. Th
 	    	OSV API base URL (default "https://api.osv.dev")
 	  -public-url string
 	    	externally visible base URL, used in rewritten download links (default: derived from each request)
-
-If `GITHUB_TOKEN` or `PKGWARDEN_GHSA_TOKEN` is set, the help text prints the token's value as the default of `-ghsa-token`. Unset both before you share the output.
 
 There are 18 flags. To count them, run this:
 
@@ -71,6 +69,7 @@ A command-line flag replaces the environment value. It does not add to it. `-all
 | int | A decimal integer. |
 | bool | `1`, `t`, `T`, `TRUE`, `true`, `True`, `0`, `f`, `F`, `FALSE`, `false`, or `False`. On the command line, write a false value with `=`, such as `-heuristics=false`. A bare `-heuristics` means true. |
 | string | Any text. |
+| level | `debug`, `info`, `warn`, or `error`, in any case. |
 
 ## All flags
 
@@ -86,7 +85,7 @@ A command-line flag replaces the environment value. It does not add to it. `-all
 | `-heuristics-block` | int | `70` | `PKGWARDEN_HEURISTICS_BLOCK` |
 | `-heuristics-warn` | int | `30` | `PKGWARDEN_HEURISTICS_WARN` |
 | `-listen` | string | `:8080` | `PKGWARDEN_LISTEN` |
-| `-log-level` | string | `info` | `PKGWARDEN_LOG_LEVEL` |
+| `-log-level` | level | `info` | `PKGWARDEN_LOG_LEVEL` |
 | `-low-downloads` | int | `100` | `PKGWARDEN_LOW_DOWNLOADS` |
 | `-metadata-ttl` | duration | `5m0s` | `PKGWARDEN_METADATA_TTL` |
 | `-new-package-age` | duration | `720h0m0s` | `PKGWARDEN_NEW_PACKAGE_AGE` |
@@ -115,7 +114,7 @@ When `-public-url` is empty, pkgwarden builds the base URL from each request. It
 
 ### `-log-level`
 
-The lowest level that reaches the log. Use `debug`, `info`, `warn`, or `error`. Case does not matter. pkgwarden writes JSON lines to stderr. See [Read the logs](deployment.md#read-the-logs).
+The lowest level that reaches the log. Use `debug`, `info`, `warn`, or `error`. Case does not matter. Any other value stops pkgwarden at startup with exit status 2. pkgwarden writes JSON lines to stderr. See [Read the logs](deployment.md#read-the-logs).
 
 ### `-metadata-ttl`
 
@@ -185,7 +184,7 @@ The base URL of the OSV API. pkgwarden sends `POST <osv-url>/v1/query`. A traili
 
 ### `-ghsa-token`
 
-A GitHub token. When it is set, pkgwarden also queries the GitHub Advisory Database at `https://api.github.com/advisories` and sends the token as a bearer token. The default is the value of `GITHUB_TOKEN` at startup. An empty value, such as `-ghsa-token ''`, turns the source off.
+A GitHub token. When it is set, pkgwarden also queries the GitHub Advisory Database at `https://api.github.com/advisories` and sends the token as a bearer token. When neither the flag nor `PKGWARDEN_GHSA_TOKEN` is set, pkgwarden uses the value of `GITHUB_TOKEN` at startup. An empty value, such as `-ghsa-token ''`, turns the source off, even when `GITHUB_TOKEN` is set. The help text names `$GITHUB_TOKEN` as the default but never prints a token.
 
 ### `-openssf`
 
@@ -193,7 +192,7 @@ Downloads the OpenSSF malicious-packages dataset in the background and checks ev
 
 ### `-openssf-refresh`
 
-How often pkgwarden downloads the OpenSSF dataset again. `0` or a negative value loads it once and never refreshes it.
+How often pkgwarden downloads the OpenSSF dataset again. After a failed download, pkgwarden retries after 30 seconds and doubles the wait after each further failure, up to `-openssf-refresh`. `0` or a negative value loads it once and never refreshes it, even when that one load fails.
 
 ### `-advisory-ttl`
 
@@ -214,10 +213,11 @@ pkgwarden checks its configuration before it listens. Each error below was captu
 | `-allow npm:` | `pkgwarden: -allow entry "npm:": want ecosystem:name` | 2 |
 | `-allow maven:x` | `pkgwarden: -allow entry "maven:x": unknown ecosystem "maven"` | 2 |
 | `-block-severity moderate` | `pkgwarden: -block-severity "moderate": want low, medium, high, critical or none` | 2 |
-| `-log-level verbose` | `2026/11/07 17:25:42 ERROR exiting err="-log-level: slog: level string \"verbose\": unknown name"` | 1 |
-| A `-listen` address already in use | A `listening` line, then `{"time":"...","level":"ERROR","msg":"exiting","err":"listen tcp 127.0.0.1:18181: bind: address already in use"}` | 1 |
+| `-log-level verbose` | `invalid value "verbose" for flag -log-level: slog: level string "verbose": unknown name`, the help text, then `pkgwarden: invalid value "verbose" for flag -log-level: slog: level string "verbose": unknown name` | 2 |
+| `PKGWARDEN_LOG_LEVEL=verbose` | `pkgwarden: PKGWARDEN_LOG_LEVEL: slog: level string "verbose": unknown name` | 2 |
+| A `-listen` address already in use | `{"time":"...","level":"ERROR","msg":"exiting","err":"listen tcp 127.0.0.1:18181: bind: address already in use"}` | 1 |
 
-The `-log-level` error is checked after the other flags, so it uses Go's plain log format and exit status 1. The bind error comes after pkgwarden has logged `listening`, because the log line is written before the listener opens.
+A bind error comes after the configuration checks, so it is a JSON log line with exit status 1. pkgwarden does not log `listening` in that case.
 
 ## Example configurations
 

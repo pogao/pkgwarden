@@ -100,11 +100,11 @@ pkgwarden writes one JSON object per line to stderr. Each line has `time`, `leve
 
 | `msg` | Level | Meaning | Other fields |
 | --- | --- | --- | --- |
-| `listening` | INFO | pkgwarden started. It is logged before the listener opens, so a bind error follows it. | `addr`, `cooldown`, `ghsa`, `openssf`, `heuristics` |
+| `listening` | INFO | pkgwarden bound its port and started serving. `addr` is the bound address, so `-listen :0` shows the port the system picked. | `addr`, `cooldown`, `ghsa`, `openssf`, `heuristics` |
 | `blocked` | INFO | pkgwarden answered a request with 403. | `subject`, `reasons` |
 | `serving with warnings` | WARN | pkgwarden served a response whose verdict was `warn`. | `subject`, `reasons` |
 | `hiding every version` | INFO | pkgwarden served an empty RubyGems info file for a gem blocked at package level. | `subject`, `findings` |
-| `advisory dataset refresh failed` | ERROR | An OpenSSF download or parse failed. The previous index stays in use. | `source`, `err` |
+| `advisory dataset refresh failed` | ERROR | An OpenSSF download or parse failed. The previous index stays in use, and pkgwarden retries with backoff. | `source`, `err` |
 | `pypi download count unavailable` | DEBUG | pypistats did not answer in time, or answered without a count. | `project`, `err` |
 | `exiting` | ERROR | pkgwarden stopped because of an error. | `err` |
 
@@ -134,7 +134,7 @@ pkgwarden stops on `SIGINT` or `SIGTERM`. It stops accepting connections, waits 
 - pkgwarden has no authentication. Anyone who can reach the port can install packages through it, read verdicts from `/api/v1/check`, and make it send requests to the public registries. Expose it only on a private network, or put an authenticating proxy in front of it.
 - pkgwarden never forwards client credentials upstream. Each adapter copies only named headers, such as `Accept`, `Range`, and conditional headers. An `Authorization` header sent to pkgwarden stays there.
 - The GitHub token goes only to `api.github.com`. pkgwarden refuses a pagination link to any other host.
-- `pkgwarden -h` prints the value of `GITHUB_TOKEN` or `PKGWARDEN_GHSA_TOKEN` as the default of `-ghsa-token`. Do not run it where its output is logged.
+- `pkgwarden -h` never prints a token. The help text names `$GITHUB_TOKEN` as the default of `-ghsa-token`.
 - PyPI file links never carry an upstream URL. pkgwarden looks each file up in PyPI's metadata and serves it only from `files.pythonhosted.org`.
 
 ## Know its limits
