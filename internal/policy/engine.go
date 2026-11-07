@@ -111,9 +111,11 @@ func (e *Engine) knownBad(ctx context.Context, pkg *Package, a *Assessment) {
 		a.Package.add(Finding{Rule: RuleAdvisoryLookup, Decision: d, Reason: "advisory lookup failed: " + err.Error()})
 	}
 	for _, adv := range advs {
-		f := Finding{Rule: RuleAdvisory, Decision: Warn, Reason: describe(adv)}
-		if adv.Kind == advisory.Malicious ||
-			(e.cfg.BlockSeverity > advisory.SeverityUnknown && adv.Severity >= e.cfg.BlockSeverity) {
+		f := Finding{Rule: RuleVulnerability, Decision: Warn, Reason: describe(adv)}
+		switch {
+		case adv.Kind == advisory.Malicious:
+			f.Rule, f.Decision = RuleMalicious, Block
+		case e.cfg.BlockSeverity > advisory.SeverityUnknown && adv.Severity >= e.cfg.BlockSeverity:
 			f.Decision = Block
 		}
 		if len(adv.Versions) == 0 && len(adv.Ranges) == 0 {

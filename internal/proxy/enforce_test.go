@@ -12,7 +12,7 @@ import (
 func TestBlockMessageStaysPrintable(t *testing.T) {
 	var v policy.Verdict
 	for range 12 {
-		v.Findings = append(v.Findings, policy.Finding{Rule: policy.RuleAdvisory, Decision: policy.Block,
+		v.Findings = append(v.Findings, policy.Finding{Rule: policy.RuleVulnerability, Decision: policy.Block,
 			Reason: "GHSA-xxxx-xxxx-xxxx (high vulnerability, via osv): " + strings.Repeat("long summary ", 20)})
 	}
 	v.Decision = policy.Block
@@ -31,9 +31,9 @@ func TestBlockMessageCountsOnlyBlockingFindings(t *testing.T) {
 	var v policy.Verdict
 	for i := range blocking {
 		v.Findings = append(v.Findings,
-			policy.Finding{Rule: policy.RuleAdvisory, Decision: policy.Block,
+			policy.Finding{Rule: policy.RuleVulnerability, Decision: policy.Block,
 				Reason: fmt.Sprintf("BLOCK-%02d (high vulnerability, via osv): ", i) + strings.Repeat("long summary ", 20)},
-			policy.Finding{Rule: policy.RuleAdvisory, Decision: policy.Warn,
+			policy.Finding{Rule: policy.RuleVulnerability, Decision: policy.Warn,
 				Reason: fmt.Sprintf("WARN-%02d (low vulnerability, via osv): ", i) + strings.Repeat("long summary ", 20)})
 	}
 	v.Decision = policy.Block
