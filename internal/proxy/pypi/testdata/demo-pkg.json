@@ -1,0 +1,138 @@
+{
+  "info": {
+    "name": "Demo_Pkg",
+    "version": "1.1.0",
+    "summary": "A fixture modeled on https://pypi.org/pypi/six/json",
+    "requires_python": ">=3.8",
+    "yanked": false,
+    "yanked_reason": null
+  },
+  "last_serial": 27000001,
+  "releases": {
+    "0.1.0": [],
+    "0.8.0": [
+      {
+        "comment_text": "",
+        "core-metadata": false,
+        "digests": {
+          "blake2b_256": "0b1c6f2a10e3a7f8eea80a9fa8358c1cd89ef489bc03675e69e54ed2982cd6f2",
+          "md5": "1c0f2c2ef7e0d4f3c5ce0e2bd0ef8e33",
+          "sha256": "8080808080808080808080808080808080808080808080808080808080808080"
+        },
+        "downloads": -1,
+        "filename": "demo_pkg-0.8.0.tar.gz",
+        "has_sig": false,
+        "md5_digest": "1c0f2c2ef7e0d4f3c5ce0e2bd0ef8e33",
+        "packagetype": "sdist",
+        "python_version": "source",
+        "requires_python": null,
+        "size": 9001,
+        "upload_time": "{{OLDER}}",
+        "upload_time_iso_8601": "{{OLDER}}",
+        "url": "https://elsewhere.example/packages/demo_pkg-0.8.0.tar.gz",
+        "yanked": false,
+        "yanked_reason": null
+      }
+    ],
+    "0.9.0": [
+      {
+        "comment_text": "",
+        "core-metadata": false,
+        "digests": {
+          "blake2b_256": "a1b2c3d4e3a7f8eea80a9fa8358c1cd89ef489bc03675e69e54ed2982cd6f2a2",
+          "md5": "9ac7e129a80f72d6fc1f0216f6e9627b",
+          "sha256": "9090909090909090909090909090909090909090909090909090909090909090"
+        },
+        "downloads": -1,
+        "filename": "demo_pkg-0.9.0.tar.gz",
+        "has_sig": false,
+        "md5_digest": "9ac7e129a80f72d6fc1f0216f6e9627b",
+        "packagetype": "sdist",
+        "python_version": "source",
+        "requires_python": null,
+        "size": 10222,
+        "upload_time": "{{OLDER}}",
+        "upload_time_iso_8601": "{{OLDER}}",
+        "url": "{{FILES}}/packages/a1/b2/c3d4/demo_pkg-0.9.0.tar.gz",
+        "yanked": true,
+        "yanked_reason": "broken <build> & bad metadata"
+      }
+    ],
+    "1.0.0": [
+      {
+        "comment_text": "",
+        "core-metadata": {
+          "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        },
+        "digests": {
+          "blake2b_256": "10e3a7f8eea80a9fa8358c1cd89ef489bc03675e69e54ed2982cd6f2a28d8295",
+          "md5": "5d1c0e2f6a2b1d7f0e9c8b7a6f5e4d3c",
+          "sha256": "1010101010101010101010101010101010101010101010101010101010101010"
+        },
+        "downloads": -1,
+        "filename": "demo_pkg-1.0.0-py3-none-any.whl",
+        "has_sig": false,
+        "md5_digest": "5d1c0e2f6a2b1d7f0e9c8b7a6f5e4d3c",
+        "packagetype": "bdist_wheel",
+        "python_version": "py3",
+        "requires_python": ">=3.8, !=3.9.*",
+        "size": 11053,
+        "upload_time": "{{OLD}}",
+        "upload_time_iso_8601": "{{OLD}}",
+        "url": "{{FILES}}/packages/10/e3/a7f8eea80a9fa8358c1cd89ef489bc03675e69e54ed2982cd6f2a28d8295/demo_pkg-1.0.0-py3-none-any.whl",
+        "yanked": false,
+        "yanked_reason": null
+      },
+      {
+        "comment_text": "",
+        "core-metadata": false,
+        "digests": {
+          "blake2b_256": "71dc2a1e4e5c8f0e0e3d4b8e9c7f9e5b2a1b6c4f3e2d1c0b9a8f7e6d5c4b3a29",
+          "md5": "a7f6e5d4c3b2a1908f7e6d5c4b3a2918",
+          "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+        },
+        "downloads": -1,
+        "filename": "demo_pkg-1.0.0.tar.gz",
+        "has_sig": false,
+        "md5_digest": "a7f6e5d4c3b2a1908f7e6d5c4b3a2918",
+        "packagetype": "sdist",
+        "python_version": "source",
+        "requires_python": ">=3.8, !=3.9.*",
+        "size": 34549,
+        "upload_time": "{{OLD}}",
+        "upload_time_iso_8601": "{{OLD}}",
+        "url": "{{FILES}}/packages/71/dc/2a1e4e5c8f0e0e3d4b8e9c7f9e5b2a1b6c4f3e2d1c0b9a8f7e6d5c4b3a29/demo_pkg-1.0.0.tar.gz",
+        "yanked": false,
+        "yanked_reason": null
+      }
+    ],
+    "1.1.0": [
+      {
+        "comment_text": "",
+        "core-metadata": {
+          "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        },
+        "digests": {
+          "blake2b_256": "d9d8e3a7f8eea80a9fa8358c1cd89ef489bc03675e69e54ed2982cd6f2a28d82",
+          "md5": "0f9e8d7c6b5a49382716f5e4d3c2b1a0",
+          "sha256": "1212121212121212121212121212121212121212121212121212121212121212"
+        },
+        "downloads": -1,
+        "filename": "demo_pkg-1.1.0-py3-none-any.whl",
+        "has_sig": false,
+        "md5_digest": "0f9e8d7c6b5a49382716f5e4d3c2b1a0",
+        "packagetype": "bdist_wheel",
+        "python_version": "py3",
+        "requires_python": ">=3.8",
+        "size": 11210,
+        "upload_time": "{{YOUNG}}",
+        "upload_time_iso_8601": "{{YOUNG}}",
+        "url": "{{FILES}}/packages/d9/d8/e3a7f8eea80a9fa8358c1cd89ef489bc03675e69e54ed2982cd6f2a28d82/demo_pkg-1.1.0-py3-none-any.whl",
+        "yanked": false,
+        "yanked_reason": null
+      }
+    ]
+  },
+  "urls": [],
+  "vulnerabilities": []
+}

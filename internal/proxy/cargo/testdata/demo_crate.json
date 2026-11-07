@@ -1,0 +1,100 @@
+{
+  "crate": {
+    "id": "demo_crate",
+    "name": "demo_crate",
+    "updated_at": "{{YOUNG}}",
+    "keywords": ["integer"],
+    "categories": ["no-std"],
+    "badges": [],
+    "created_at": "{{OLDER}}",
+    "downloads": 1603869544,
+    "recent_downloads": 130000,
+    "default_version": "0.3.0",
+    "num_versions": 3,
+    "yanked": false,
+    "max_version": "0.3.0",
+    "newest_version": "0.3.0",
+    "max_stable_version": "0.3.0",
+    "description": "A fixture modeled on https://crates.io/api/v1/crates/itoa",
+    "homepage": null,
+    "documentation": "https://docs.rs/demo_crate",
+    "repository": "https://github.com/example/demo_crate",
+    "links": {
+      "version_downloads": "/api/v1/crates/demo_crate/downloads",
+      "versions": null,
+      "owners": "/api/v1/crates/demo_crate/owners",
+      "owner_team": "/api/v1/crates/demo_crate/owner_team",
+      "owner_user": "/api/v1/crates/demo_crate/owner_user",
+      "reverse_dependencies": "/api/v1/crates/demo_crate/reverse_dependencies"
+    },
+    "exact_match": false,
+    "trustpub_only": false
+  },
+  "versions": [
+    {
+      "id": 2143864,
+      "crate": "demo_crate",
+      "num": "0.3.0",
+      "dl_path": "/api/v1/crates/demo_crate/0.3.0/download",
+      "updated_at": "{{YOUNG}}",
+      "created_at": "{{YOUNG}}",
+      "downloads": 12,
+      "features": {},
+      "yanked": false,
+      "yank_message": null,
+      "license": "MIT OR Apache-2.0",
+      "crate_size": 15935,
+      "published_by": {
+        "id": 99001,
+        "login": "newcomer",
+        "name": "New Comer",
+        "avatar": "https://avatars.githubusercontent.com/u/99001?v=4",
+        "url": "https://github.com/newcomer"
+      },
+      "checksum": "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682",
+      "rust_version": "1.68"
+    },
+    {
+      "id": 2101111,
+      "crate": "demo_crate",
+      "num": "0.2.0",
+      "dl_path": "/api/v1/crates/demo_crate/0.2.0/download",
+      "updated_at": "{{OLD}}",
+      "created_at": "{{OLD}}",
+      "downloads": 477265,
+      "features": {},
+      "yanked": false,
+      "yank_message": null,
+      "license": "MIT OR Apache-2.0",
+      "crate_size": 15800,
+      "published_by": {
+        "id": 3618,
+        "login": "maintainer",
+        "name": "Long Time Maintainer",
+        "avatar": "https://avatars.githubusercontent.com/u/1940490?v=4",
+        "url": "https://github.com/maintainer"
+      },
+      "checksum": "92ecc6618181def0457392ccd0ee51198e065e016d1d527a7ac1b6dc7c1f09d2",
+      "rust_version": "1.68"
+    },
+    {
+      "id": 31337,
+      "crate": "demo_crate",
+      "num": "0.1.0",
+      "dl_path": "/api/v1/crates/demo_crate/0.1.0/download",
+      "updated_at": "{{OLDER}}",
+      "created_at": "{{OLDER}}",
+      "downloads": 1003,
+      "features": {},
+      "yanked": false,
+      "yank_message": null,
+      "license": "MIT",
+      "crate_size": 4100,
+      "published_by": null,
+      "checksum": "8fe390286ad3ad1b175ad07a638c83463c86cbdb5e38075c2ef44e10c694702b",
+      "rust_version": null
+    }
+  ],
+  "keywords": [{"id": "integer", "keyword": "integer", "created_at": "2015-01-20T18:30:39.264Z", "crates_cnt": 120}],
+  "categories": [{"id": "no-std", "category": "No standard library", "slug": "no-std", "description": "Crates that are able to function without the Rust standard library.", "created_at": "2017-02-10T01:52:09.447906Z", "crates_cnt": 9001}]
+}
