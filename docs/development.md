@@ -12,6 +12,8 @@ This guide covers the code layout, the tests, adding an ecosystem, and refreshin
 	internal/version/       version ordering for SemVer, PEP 440, and Gem::Version
 	internal/cache/         the in-memory TTL cache
 	internal/proxy/         the server, upstream access, and 403 responses shared by every adapter
+	internal/telemetry/     Prometheus metrics, request IDs, and the request and upstream log lines
+	internal/telemetry/telemetrytest/  reads /metrics and captures logs for tests
 	internal/proxy/npm/     the npm adapter
 	internal/proxy/pypi/    the PyPI adapter
 	internal/proxy/rubygems/  the RubyGems adapter
@@ -59,12 +61,15 @@ The script checks these behaviors:
 | PyPI | The wheel of `urllib3` 1.24.1 gets a 403 that names the advisory. |
 | Go | `go get golang.org/x/text@latest` succeeds. |
 | Go | `go get golang.org/x/text@v0.3.6` fails with pkgwarden's 403. |
-| Cargo | `cargo fetch` of `itoa = "1"` succeeds through the `pkgwarden` source. |
+| Cargo | `cargo fetch` of `itoa = "1"` downloads the crate through the `pkgwarden` source. |
 | Cargo | `cargo fetch` of `smallvec = "=1.6.0"` fails to select a version. |
 | Cargo | The download of `smallvec` 1.6.0 gets a 403 that names the advisory. |
 | RubyGems | `bundle install` of `rack ~> 3.0` succeeds through the mirror. |
 | RubyGems | `bundle install` of `rack = 2.2.3` fails. |
 | RubyGems | The download of `rack-2.2.3.gem` gets a 403 that names the advisory. |
+| All | `/metrics` counts at least one served artifact and one block for every ecosystem. |
+| npm | An allowed download sent with its own `X-Request-Id` has a `request` line and an `upstream` line with that ID in the log. |
+| npm | A blocked download's 403 body ends with its request ID, and that ID has a `request` line and a `blocked` line. |
 
 It prints `PASS` or `FAIL` for each check, and exits with status 1 if any check failed. The checks depend on live registry and advisory data. A new advisory for `requests` 2.31.0, for example, would fail a check without any code change.
 
@@ -84,9 +89,10 @@ An adapter serves one registry protocol under `/<ecosystem>/` and describes pack
 
 Inside the adapter, reuse the shared pieces in `internal/proxy`:
 
-- Fetch metadata with `Upstream.Fetch` or `Upstream.FetchJSON`, which cache it. Open artifacts with `Upstream.Open`, which does not, and copy them to the client with `Relay`.
-- Call `Engine.Assess` once per request. Pass the package verdict to `Enforce` before you serve metadata, and drop each version for which `Assessment.Allowed` is false.
-- Pass `Assessment.Release(version)` to `Enforce` before you serve a file. `Enforce` writes the 403 and returns false when the verdict blocks.
+- Fetch metadata with `Upstream.Fetch` or `Upstream.FetchJSON`, which cache it. Open artifacts with `Upstream.Open`, which does not. Copy a release's file to the client with `ServeArtifact`, which counts it in the artifact metrics, and anything else with `Relay`.
+- Call `Engine.Assess` once per request. Pass the package verdict to `Enforce` with `StageMetadata` before you serve metadata, and drop each version for which `Assessment.Allowed` is false.
+- Pass `Assessment.Release(version)` to `Enforce` with `StageArtifact` before you serve a file. `Enforce` counts the decision, writes the 403, and returns false when the verdict blocks.
+- Pass the request's context to `Enforce`, `ServeArtifact`, and every `Upstream` call, and log with the `slog` `Context` functions, so that every line carries the request ID.
 - Build absolute links with `BaseURL(req, publicURL)`.
 - Map upstream failures with `WriteError`, which answers 404 for a missing resource and 502 otherwise.
 - Copy only named request headers upstream, never the whole header set, so client credentials stay with pkgwarden.

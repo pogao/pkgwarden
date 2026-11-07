@@ -101,7 +101,7 @@ The merged advisory takes these values from its group:
 
 ## How a finding reads
 
-Each advisory that covers a release becomes a finding with rule `advisory`. The reason has this form:
+Each advisory that covers a release becomes a finding. Its rule is `advisory/malicious` when the advisory reports a malicious package, and `advisory/vulnerability` otherwise, so metrics and logs can tell the two apart. The reason has this form:
 
 	<ID> (<rating> <kind>, via <sources>): <summary> <URL>
 
@@ -118,6 +118,8 @@ pkgwarden caches the merged result of each lookup for `-advisory-ttl`, keyed by 
 Concurrent lookups for the same package share one call to the sources. That call keeps running when the request that started it is cancelled, so the requests still waiting get the result. It has a 30-second timeout.
 
 A failed lookup is never cached. The next request for the package tries again.
+
+`pkgwarden_cache_requests_total{cache="advisory"}` counts the hits and misses. See [Metrics and request tracing](observability.md).
 
 ## When a lookup fails
 

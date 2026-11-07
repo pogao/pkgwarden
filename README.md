@@ -7,7 +7,7 @@ Many supply-chain attacks arrive as a new release. A hijacked maintainer account
 Package managers keep working normally through it. pkgwarden removes blocked versions from the metadata it serves, so a resolver picks the newest allowed version on its own. A direct download of a blocked version gets HTTP 403, and the client prints the reason. This npm output is trimmed after the second line:
 
 	npm error code E403
-	npm error 403 403 Forbidden - GET http://127.0.0.1:18181/npm/lodash/-/lodash-4.17.20.tgz - pkgwarden blocked npm/lodash@4.17.20: advisory: GHSA-35jh-r3h4-6jhm (high vulnerability, via osv): Command Injection in lodash https://osv.dev/vulnerability/GHSA-35jh-r3h4-6jhm; advisory: GHSA-r5fr-rjxr-66jc (high vulnerability, via osv): lodash vulnerable to Code Injection via `_.template` imports key names https://osv.dev/vulnerabi...
+	npm error 403 403 Forbidden - GET http://127.0.0.1:18181/npm/lodash/-/lodash-4.17.20.tgz - pkgwarden blocked npm/lodash@4.17.20: advisory/vulnerability: GHSA-35jh-r3h4-6jhm (high vulnerability, via osv): Command Injection in lodash https://osv.dev/vulnerability/GHSA-35jh-r3h4-6jhm; advisory/vulnerability: GHSA-r5fr-rjxr-66jc (high vulnerability, via osv): lodash vulnerable to Code Injection via `_.template` imports key names https://osv... (request 0d43614cae40e59f3c498ff91116a7be)
 	...
 
 ## Features
@@ -19,6 +19,8 @@ Package managers keep working normally through it. pkgwarden removes blocked ver
 - **Filtered metadata and refused downloads.** Resolvers never see blocked versions, and lockfiles or direct URLs that name one get a 403 with the reason. See [How pkgwarden works](docs/how-it-works.md).
 - **Allowlist.** Packages you trust skip every check. See [`-allow`](docs/configuration.md#-allow).
 - **Check API.** `GET /api/v1/check` tells you why a release is blocked without downloading it. See [HTTP API reference](docs/api.md).
+- **Prometheus metrics.** `/metrics` counts requests, served and blocked downloads, upstream errors, and cache hits, and shows how fresh the OpenSSF index is. Blocks are counted per rule, so malicious, vulnerable, cooldown, and typosquat blocks show up separately. See [Metrics and request tracing](docs/observability.md).
+- **Request tracing.** Every log line about a request carries one request ID, from the inbound request through each registry and advisory call. The ID is in the `X-Request-Id` header and at the end of every 403 message. See [Follow one request through the logs](docs/observability.md#follow-one-request-through-the-logs).
 - **Five ecosystems.** One proxy serves npm, pnpm, Yarn, pip, uv, Poetry, Bundler, gem, Go, and Cargo. See [Point your package managers at pkgwarden](docs/package-managers.md).
 
 ## Quick start
@@ -47,8 +49,9 @@ To set up pip, uv, Poetry, Bundler, gem, Go, Cargo, pnpm, or Yarn, see [Point yo
 - [Heuristics](docs/heuristics.md) lists every signal and weight, the scoring rules, and typosquat detection.
 - [Point your package managers at pkgwarden](docs/package-managers.md) sets up each client and shows what it prints for a blocked release.
 - [Configuration reference](docs/configuration.md) lists every flag and environment variable, with example configurations.
-- [HTTP API reference](docs/api.md) documents `/api/v1/check`, `/healthz`, the response headers, the 403 body, and every route.
-- [Deploy pkgwarden](docs/deployment.md) covers the image, TLS, egress, logs, shutdown, and security.
+- [HTTP API reference](docs/api.md) documents `/api/v1/check`, `/healthz`, `/metrics`, the response headers, the 403 body, and every route.
+- [Deploy pkgwarden](docs/deployment.md) covers the image, TLS, egress, logs, Prometheus scraping, shutdown, and security.
+- [Metrics and request tracing](docs/observability.md) lists every metric with example queries and shows how to follow one request through the logs.
 - [Develop pkgwarden](docs/development.md) covers the code layout, the tests, and adding an ecosystem.
 
 ## Development

@@ -17,6 +17,12 @@ A request for package metadata goes like this:
 
 A request for a file, such as an npm tarball or a Python wheel, runs the same assessment and applies the verdict of the version the file belongs to. If the version is allowed, pkgwarden streams the file from upstream. If it is blocked, pkgwarden answers 403 and never contacts the file host.
 
+## One request ID ties the log lines together
+
+Before a request reaches an adapter, pkgwarden gives it an ID, or keeps a well-formed `X-Request-Id` that the client or a load balancer sent. The ID travels in the request's context. Every upstream call made for the request logs an `upstream` line with that ID, and so do the `blocked` and `serving with warnings` lines. When the response is done, pkgwarden logs one `request` line with the ID, and returns the ID in the `X-Request-Id` header. A 403 body ends with it too. The ID never goes upstream.
+
+The middleware that assigns the ID and the transport under the upstream HTTP client also count each inbound request and each outbound call in the Prometheus metrics at `/metrics`. The adapters count policy decisions and served files where they apply the verdict. [Metrics and request tracing](observability.md) lists the metrics and shows a full trace.
+
 ## Every adapter translates into one model
 
 The engine only sees two types, defined in `internal/policy/policy.go`.
@@ -70,7 +76,7 @@ A 403 on an info file makes Bundler give up on the compact index for the whole s
 
 ## Caching keeps upstream traffic low
 
-pkgwarden keeps three caches in memory. None survives a restart.
+pkgwarden keeps three caches in memory. None survives a restart. `pkgwarden_cache_requests_total` counts the hits and misses of the first two, and the `pkgwarden_openssf_` metrics show the state of the third.
 
 - pkgwarden caches upstream metadata, such as packuments, index files, version lists, and download counts, for `-metadata-ttl` (default 5 minutes). The cache holds at most 512 documents. Concurrent requests for the same document share one upstream round trip.
 - pkgwarden caches advisory lookups per ecosystem and package name for `-advisory-ttl` (default 1 hour). The cache holds at most 10000 packages. A failed lookup is not cached, so the next request tries again.
@@ -93,4 +99,4 @@ Some limits are deliberate. Knowing them helps you deploy pkgwarden in the right
 - It does not forward client credentials. Adapters copy only named headers upstream, such as `Accept`, `Range`, and conditional headers, so a token meant for pkgwarden never reaches a public registry.
 - It does not proxy private registries. The upstream URLs are fixed to the public registries. Only the OSV URL is configurable, through `-osv-url`.
 - It does not inspect package contents. Every check works from registry metadata and advisory data. The `install-scripts` signal reads the `scripts` field of an npm manifest, not the tarball.
-- It does not keep an access log. It logs blocks, warnings, and errors only. See [the log reference](deployment.md#read-the-logs).
+- It does not export traces. Request IDs tie log lines together, but pkgwarden sends no spans to a tracing backend. See [the log reference](deployment.md#read-the-logs).
