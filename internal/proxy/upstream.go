@@ -103,7 +103,10 @@ func (u *Upstream) Open(ctx context.Context, url string, header http.Header) (*h
 	return u.client.Do(req)
 }
 
-var relayHeaders = []string{"Content-Type", "Content-Length", "Content-Encoding", "ETag", "Last-Modified", "Cache-Control"}
+var relayHeaders = []string{
+	"Content-Type", "Content-Length", "Content-Encoding", "Content-Range", "Accept-Ranges",
+	"ETag", "Last-Modified", "Cache-Control", "Repr-Digest", "Digest",
+}
 
 // Relay copies an upstream response to w.
 func Relay(w http.ResponseWriter, resp *http.Response) {
