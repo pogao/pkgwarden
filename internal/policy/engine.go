@@ -15,9 +15,10 @@ import (
 type Config struct {
 	// Cooldown is the minimum age a release must reach before it is served.
 	Cooldown time.Duration
-	// BlockVulnerabilities blocks releases with known vulnerabilities.
-	// Malicious releases are always blocked; when false, vulnerable ones only warn.
-	BlockVulnerabilities bool
+	// BlockSeverity is the lowest rating at which a vulnerability blocks a
+	// release; lower-rated and unrated vulnerabilities only warn. The zero
+	// value never blocks for vulnerabilities. Malicious releases always block.
+	BlockSeverity advisory.Severity
 	// FailOpen serves packages when advisory sources cannot be reached,
 	// instead of blocking them.
 	FailOpen   bool
@@ -110,9 +111,10 @@ func (e *Engine) knownBad(ctx context.Context, pkg *Package, a *Assessment) {
 		a.Package.add(Finding{Rule: RuleAdvisoryLookup, Decision: d, Reason: "advisory lookup failed: " + err.Error()})
 	}
 	for _, adv := range advs {
-		f := Finding{Rule: RuleAdvisory, Decision: Block, Reason: describe(adv)}
-		if adv.Kind == advisory.Vulnerability && !e.cfg.BlockVulnerabilities {
-			f.Decision = Warn
+		f := Finding{Rule: RuleAdvisory, Decision: Warn, Reason: describe(adv)}
+		if adv.Kind == advisory.Malicious ||
+			(e.cfg.BlockSeverity > advisory.SeverityUnknown && adv.Severity >= e.cfg.BlockSeverity) {
+			f.Decision = Block
 		}
 		if len(adv.Versions) == 0 && len(adv.Ranges) == 0 {
 			a.Package.add(f)
@@ -128,8 +130,11 @@ func (e *Engine) knownBad(ctx context.Context, pkg *Package, a *Assessment) {
 
 func describe(adv advisory.Advisory) string {
 	kind := adv.Kind.String()
-	if adv.Severity != "" {
-		kind = strings.ToLower(adv.Severity) + " " + kind
+	switch {
+	case adv.Severity != advisory.SeverityUnknown:
+		kind = strings.ToLower(adv.Severity.String()) + " " + kind
+	case adv.Kind == advisory.Vulnerability:
+		kind = "unrated " + kind
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s (%s, via %s)", adv.ID, kind, adv.Source)

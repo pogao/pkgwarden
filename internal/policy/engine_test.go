@@ -110,29 +110,47 @@ func TestAdvisories(t *testing.T) {
 		{Version: "1.0.0", Published: daysAgo(400)},
 		{Version: "1.1.0", Published: daysAgo(300)},
 	}
+	vuln := func(sev advisory.Severity) advisory.Advisory {
+		return advisory.Advisory{ID: "GHSA-aaaa-bbbb-cccc", Source: "ghsa", Kind: advisory.Vulnerability, Severity: sev, Versions: []string{"1.0.0"}}
+	}
 	malicious := advisory.Advisory{ID: "MAL-2026-1", Source: "openssf", Kind: advisory.Malicious, Versions: []string{"1.1.0"}}
-	vuln := advisory.Advisory{ID: "GHSA-aaaa-bbbb-cccc", Source: "ghsa", Kind: advisory.Vulnerability, Severity: "HIGH", Versions: []string{"1.0.0"}}
 	everything := advisory.Advisory{ID: "MAL-2026-2", Source: "osv", Kind: advisory.Malicious}
 
 	tests := []struct {
 		name      string
 		advs      []advisory.Advisory
-		blockVuln bool
+		threshold advisory.Severity
 		want      map[string]Decision
 		mention   string
 	}{
-		{"malicious blocks even when vulnerabilities only warn", []advisory.Advisory{malicious}, false,
-			map[string]Decision{"1.0.0": Allow, "1.1.0": Block}, "MAL-2026-1 (malicious, via openssf)"},
-		{"vulnerability blocks when configured", []advisory.Advisory{vuln}, true,
+		{"critical blocks at high", []advisory.Advisory{vuln(advisory.SeverityCritical)}, advisory.SeverityHigh,
+			map[string]Decision{"1.0.0": Block, "1.1.0": Allow}, "GHSA-aaaa-bbbb-cccc (critical vulnerability, via ghsa)"},
+		{"high blocks at high", []advisory.Advisory{vuln(advisory.SeverityHigh)}, advisory.SeverityHigh,
 			map[string]Decision{"1.0.0": Block, "1.1.0": Allow}, "GHSA-aaaa-bbbb-cccc (high vulnerability, via ghsa)"},
-		{"vulnerability warns otherwise", []advisory.Advisory{vuln}, false,
-			map[string]Decision{"1.0.0": Warn, "1.1.0": Allow}, "GHSA-aaaa-bbbb-cccc"},
-		{"advisory without versions or ranges blocks every release", []advisory.Advisory{everything}, false,
+		{"medium warns at high", []advisory.Advisory{vuln(advisory.SeverityMedium)}, advisory.SeverityHigh,
+			map[string]Decision{"1.0.0": Warn, "1.1.0": Allow}, "GHSA-aaaa-bbbb-cccc (medium vulnerability, via ghsa)"},
+		{"low warns at high", []advisory.Advisory{vuln(advisory.SeverityLow)}, advisory.SeverityHigh,
+			map[string]Decision{"1.0.0": Warn, "1.1.0": Allow}, "GHSA-aaaa-bbbb-cccc (low vulnerability, via ghsa)"},
+		{"unrated warns at high", []advisory.Advisory{vuln(advisory.SeverityUnknown)}, advisory.SeverityHigh,
+			map[string]Decision{"1.0.0": Warn, "1.1.0": Allow}, "GHSA-aaaa-bbbb-cccc (unrated vulnerability, via ghsa)"},
+		{"low blocks at low", []advisory.Advisory{vuln(advisory.SeverityLow)}, advisory.SeverityLow,
+			map[string]Decision{"1.0.0": Block, "1.1.0": Allow}, "GHSA-aaaa-bbbb-cccc (low vulnerability, via ghsa)"},
+		{"unrated warns at low", []advisory.Advisory{vuln(advisory.SeverityUnknown)}, advisory.SeverityLow,
+			map[string]Decision{"1.0.0": Warn, "1.1.0": Allow}, "GHSA-aaaa-bbbb-cccc (unrated vulnerability, via ghsa)"},
+		{"high warns at critical", []advisory.Advisory{vuln(advisory.SeverityHigh)}, advisory.SeverityCritical,
+			map[string]Decision{"1.0.0": Warn, "1.1.0": Allow}, "GHSA-aaaa-bbbb-cccc (high vulnerability, via ghsa)"},
+		{"critical warns when no threshold is set", []advisory.Advisory{vuln(advisory.SeverityCritical)}, advisory.SeverityUnknown,
+			map[string]Decision{"1.0.0": Warn, "1.1.0": Allow}, "GHSA-aaaa-bbbb-cccc (critical vulnerability, via ghsa)"},
+		{"unrated malicious blocks at high", []advisory.Advisory{malicious}, advisory.SeverityHigh,
+			map[string]Decision{"1.0.0": Allow, "1.1.0": Block}, "MAL-2026-1 (malicious, via openssf)"},
+		{"malicious blocks when no threshold is set", []advisory.Advisory{malicious}, advisory.SeverityUnknown,
+			map[string]Decision{"1.0.0": Allow, "1.1.0": Block}, "MAL-2026-1 (malicious, via openssf)"},
+		{"advisory without versions or ranges blocks every release", []advisory.Advisory{everything}, advisory.SeverityUnknown,
 			map[string]Decision{"1.0.0": Block, "1.1.0": Block}, "MAL-2026-2"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			e := newTestEngine(Config{BlockVulnerabilities: tt.blockVuln}, fakeSource{advs: tt.advs})
+			e := newTestEngine(Config{BlockSeverity: tt.threshold}, fakeSource{advs: tt.advs})
 			a := e.Assess(context.Background(), &Package{Ecosystem: ecosystem.Npm, Name: "left-pad", Releases: releases})
 			for version, want := range tt.want {
 				v := assertDecision(t, a, version, want)

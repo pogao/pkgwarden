@@ -5,6 +5,8 @@ package advisory
 
 import (
 	"context"
+	"slices"
+	"strings"
 
 	"github.com/pogao/pkgwarden/internal/ecosystem"
 )
@@ -24,6 +26,41 @@ func (k Kind) String() string {
 	return "vulnerability"
 }
 
+// Severity is the qualitative CVSS rating of a vulnerability. Ratings are
+// ordered, so a higher value is more severe.
+type Severity int
+
+const (
+	SeverityUnknown Severity = iota
+	SeverityLow
+	SeverityMedium
+	SeverityHigh
+	SeverityCritical
+)
+
+var severityNames = [...]string{"", "LOW", "MEDIUM", "HIGH", "CRITICAL"}
+
+// String returns the upper-case CVSS name, or "" for SeverityUnknown.
+func (s Severity) String() string {
+	if s < 0 || int(s) >= len(severityNames) {
+		return ""
+	}
+	return severityNames[s]
+}
+
+// ParseSeverity reads a database rating, ignoring case and surrounding
+// space. GitHub's "moderate" is MEDIUM. Anything else is SeverityUnknown.
+func ParseSeverity(s string) Severity {
+	s = strings.ToUpper(strings.TrimSpace(s))
+	if s == "MODERATE" {
+		return SeverityMedium
+	}
+	if i := slices.Index(severityNames[:], s); i > 0 {
+		return Severity(i)
+	}
+	return SeverityUnknown
+}
+
 // Advisory is one database entry describing affected releases of a package.
 type Advisory struct {
 	ID        string
@@ -31,7 +68,7 @@ type Advisory struct {
 	Source    string // "osv", "ghsa" or "openssf"
 	Kind      Kind
 	Summary   string
-	Severity  string // upper-case CVSS rating such as "HIGH"; empty when unknown
+	Severity  Severity
 	URL       string
 	Ecosystem ecosystem.Ecosystem
 	// Versions lists explicitly affected releases.
