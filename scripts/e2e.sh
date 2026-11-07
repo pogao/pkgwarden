@@ -62,10 +62,12 @@ for _ in $(seq 30); do curl -sf "$host/healthz" >/dev/null && break; sleep 1; do
 echo "== npm"
 expect_ok "npm install express" client node:22-alpine sh -c \
 	"cd /tmp && npm init -y >/dev/null && npm install --no-audit --registry $url/npm/ express"
-expect_refused "npm install event-stream@3.3.6 (malicious)" "ETARGET|No matching version|403" client node:22-alpine sh -c \
-	"cd /tmp && npm init -y >/dev/null && npm install --no-audit --registry $url/npm/ event-stream@3.3.6"
-expect_403 "npm tarball event-stream@3.3.6 names the advisory" \
-	/npm/event-stream/-/event-stream-3.3.6.tgz "malicious|GHSA|MAL-"
+expect_refused "npm install lodash@4.17.20 (vulnerable)" "ETARGET|No matching version|403" client node:22-alpine sh -c \
+	"cd /tmp && npm init -y >/dev/null && npm install --no-audit --registry $url/npm/ lodash@4.17.20"
+expect_403 "npm tarball lodash@4.17.20 names the advisory" \
+	/npm/lodash/-/lodash-4.17.20.tgz "vulnerability|GHSA"
+expect_403 "npm unpublished malicious event-stream@3.3.6 is refused" \
+	/npm/event-stream/-/event-stream-3.3.6.tgz "event-stream@3.3.6"
 expect_ok "npm hides @types/node releases younger than 7 days" client node:22-alpine node -e "
 	const week = 7 * 24 * 3600e3;
 	const get = u => fetch(u, {headers: {accept: 'application/json'}}).then(r => r.json());
@@ -81,34 +83,34 @@ expect_ok "npm hides @types/node releases younger than 7 days" client node:22-al
 
 echo "== pypi"
 expect_ok "pip download requests" client python:3.13-slim \
-	pip download -q --no-deps -d /tmp/d --index-url "$url/pypi/simple/" requests
+	pip download -q --no-deps -d /tmp/d --trusted-host pkgwarden --index-url "$url/pypi/simple/" requests
 expect_ok "uv-style JSON simple API lists files" client python:3.13-slim python -c "
 import json, urllib.request
 r = urllib.request.Request('$url/pypi/simple/requests/', headers={'Accept': 'application/vnd.pypi.simple.v1+json'})
 d = json.load(urllib.request.urlopen(r))
 assert d['files'] and d['files'][0]['url'].startswith('$url/pypi/files/'), d['files'][:1]"
 expect_refused "pip download urllib3==1.24.1 (vulnerable)" "No matching distribution|403" client python:3.13-slim \
-	pip download -q --no-deps -d /tmp/d --index-url "$url/pypi/simple/" urllib3==1.24.1
+	pip download -q --no-deps -d /tmp/d --trusted-host pkgwarden --index-url "$url/pypi/simple/" urllib3==1.24.1
 expect_403 "pypi file urllib3 1.24.1 names the advisory" \
 	/pypi/files/urllib3/1.24.1/urllib3-1.24.1-py2.py3-none-any.whl "vulnerability|GHSA|PYSEC|CVE"
 
 echo "== go"
 expect_ok "go get golang.org/x/text@latest" client -e GOPROXY="$url/go" golang:1.27-alpine sh -c \
-	"cd /tmp && go mod init example.com/e2e >/dev/null 2>&1 && go get golang.org/x/text@latest"
-expect_refused "go get golang.org/x/text@v0.3.6 (vulnerable)" "403|pkgwarden" client -e GOPROXY="$url/go" golang:1.27-alpine sh -c \
-	"cd /tmp && go mod init example.com/e2e >/dev/null 2>&1 && go get golang.org/x/text@v0.3.6"
+	"mkdir /work && cd /work && go mod init example.com/e2e >/dev/null 2>&1 && go get golang.org/x/text@latest"
+expect_refused "go get golang.org/x/text@v0.3.6 (vulnerable)" "403 Forbidden.*|pkgwarden blocked" client -e GOPROXY="$url/go" golang:1.27-alpine sh -c \
+	"mkdir /work && cd /work && go mod init example.com/e2e >/dev/null 2>&1 && go get golang.org/x/text@v0.3.6"
 
 echo "== cargo"
 cargo_project() {
 	cat <<-EOF
-		mkdir -p /tmp/p/src ~/.cargo && cd /tmp/p && echo 'fn main() {}' > src/main.rs
-		printf '[source.crates-io]\nreplace-with = "pkgwarden"\n[source.pkgwarden]\nregistry = "sparse+$url/cargo/index/"\n' > ~/.cargo/config.toml
+		mkdir -p /tmp/p/src /tmp/p/.cargo && cd /tmp/p && echo 'fn main() {}' > src/main.rs
+		printf '[source.crates-io]\nreplace-with = "pkgwarden"\n[source.pkgwarden]\nregistry = "sparse+$url/cargo/index/"\n' > .cargo/config.toml
 		printf '[package]\nname = "e2e"\nversion = "0.1.0"\nedition = "2021"\n[dependencies]\n%s\n' '$1' > Cargo.toml
 		cargo fetch
 	EOF
 }
-expect_ok "cargo fetch itoa" client rust:1-slim sh -c "$(cargo_project 'itoa = "1"')"
-expect_refused "cargo fetch smallvec =1.6.0 (vulnerable)" "failed to select|403|pkgwarden" \
+expect_ok "cargo fetch itoa through the proxy" client rust:1-slim sh -c "$(cargo_project 'itoa = "1"') 2>&1 | tee /dev/stderr | grep -q 'pkgwarden'"
+expect_refused "cargo fetch smallvec =1.6.0 (vulnerable)" "failed to select a version" \
 	client rust:1-slim sh -c "$(cargo_project 'smallvec = "=1.6.0"')"
 expect_403 "crate smallvec 1.6.0 names the advisory" /cargo/api/v1/crates/smallvec/1.6.0/download "vulnerability|GHSA|RUSTSEC"
 
@@ -128,7 +130,7 @@ expect_refused "bundle install rack 2.2.3 (vulnerable)" "Could not find|403|pkgw
 expect_403 "gem rack 2.2.3 names the advisory" /rubygems/gems/rack-2.2.3.gem "vulnerability|GHSA|CVE"
 
 echo "== check API"
-curl -s "$host/api/v1/check?ecosystem=npm&name=event-stream&version=3.3.6" | head -c 800; echo
+curl -s "$host/api/v1/check?ecosystem=npm&name=lodash&version=4.17.20" | head -c 600; echo
 
 echo
 if ((fails)); then echo "$fails check(s) failed; proxy log in e2e-pkgwarden.log"; exit 1; fi

@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -33,7 +34,7 @@ func Enforce(w http.ResponseWriter, f Format, subject string, v policy.Verdict) 
 		return true
 	}
 	slog.Info("blocked", "subject", subject, "reasons", reasons(v))
-	msg := "pkgwarden blocked " + subject + ": " + reasons(v)
+	msg := blockMessage(subject, v)
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	if f == JSON {
 		w.Header().Set("Content-Type", "application/json")
@@ -45,6 +46,29 @@ func Enforce(w http.ResponseWriter, f Format, subject string, v policy.Verdict) 
 	w.WriteHeader(http.StatusForbidden)
 	w.Write([]byte(msg + "\n"))
 	return false
+}
+
+// maxMessage keeps block messages short enough that clients print them:
+// the go command replaces a longer body with "[Truncated: too long.]".
+const maxMessage = 600
+
+func blockMessage(subject string, v policy.Verdict) string {
+	msg, sep := "pkgwarden blocked "+subject, ": "
+	for i, f := range v.Findings {
+		if f.Decision < v.Decision {
+			continue
+		}
+		part := string(f.Rule) + ": " + f.Reason
+		if len(part) > 160 {
+			part = strings.ToValidUTF8(part[:157], "") + "..."
+		}
+		if len(msg)+len(sep)+len(part) > maxMessage-60 {
+			return msg + fmt.Sprintf("%sand %d more, see /api/v1/check", sep, len(v.Findings)-i)
+		}
+		msg += sep + part
+		sep = "; "
+	}
+	return msg
 }
 
 func reasons(v policy.Verdict) string {
