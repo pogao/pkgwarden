@@ -80,15 +80,18 @@ func run(ctx context.Context, cfg *config) error {
 		cargo.New(cargo.Options{PublicURL: cfg.publicURL, Engine: engine, HTTP: up}),
 	)
 
+	ln, err := net.Listen("tcp", cfg.listen)
+	if err != nil {
+		return err
+	}
 	srv := &http.Server{
-		Addr:              cfg.listen,
 		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       2 * time.Minute,
 	}
 	errc := make(chan error, 1)
-	go func() { errc <- srv.ListenAndServe() }()
-	slog.Info("listening", "addr", cfg.listen, "cooldown", cfg.policy.Cooldown.String(),
+	go func() { errc <- srv.Serve(ln) }()
+	slog.Info("listening", "addr", ln.Addr().String(), "cooldown", cfg.policy.Cooldown.String(),
 		"ghsa", cfg.ghsaToken != "", "openssf", cfg.openSSF, "heuristics", cfg.policy.Heuristics.Enabled)
 
 	select {
