@@ -1,0 +1,5 @@
+---
+1.15.0-x86_64-linux racc:~> 1.4|checksum:4b28e9151e884c10794e0acf4a6f49db933eee3cd90b20aab952ee0102a03b0c,ruby:< 3.3.dev&>= 2.7,created_at:2023-05-15T19:57:24Z
+1.15.0 mini_portile2:~> 2.8.2,racc:~> 1.4|checksum:0ca8ea2149bdaaae8db39f11971af86c83923ec58b72c519d498ec44e1dfe97f,ruby:>= 2.7.0,created_at:2023-05-15T19:57:28Z
+1.16.0-x86_64-linux racc:~> 1.4|checksum:6f55093bb47e75d412138f4b9462f960d3aad96cb6b43dbe9a3de62c2d31a742,ruby:< 3.4.dev&>= 3.0,created_at:2023-12-28T00:08:33Z
+1.16.0 mini_portile2:~> 2.8.2,racc:~> 1.4|checksum:341388184e975d091e6e38ce3f3b3388bfb7e4ac3d790efd8e39124844040bd1,ruby:>= 3.0.0,created_at:2023-12-28T00:08:37Z
