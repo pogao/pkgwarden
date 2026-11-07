@@ -2,7 +2,9 @@
 # End-to-end check: builds the image, runs it, and drives the real package
 # managers (npm, pip, bundler, go, cargo) through it against the public
 # registries. Each ecosystem must install a normal package and refuse a
-# known-bad release. Needs Docker and network access.
+# known-bad release, /metrics must count both, and the proxy log must trace
+# an allowed and a blocked download by request ID. Needs Docker and network
+# access.
 set -uo pipefail
 
 cd "$(dirname "$0")/.."
@@ -11,6 +13,7 @@ net=pkgwarden-e2e
 url=http://pkgwarden:8080
 host=http://127.0.0.1:18080
 fails=0
+tmp=$(mktemp -d)
 
 pass() { printf '\033[32mPASS\033[0m %s\n' "$1"; }
 fail() { printf '\033[31mFAIL\033[0m %s\n' "$1"; fails=$((fails + 1)); }
@@ -51,6 +54,7 @@ cleanup() {
 	docker logs pkgwarden >e2e-pkgwarden.log 2>&1
 	docker rm -f pkgwarden >/dev/null 2>&1
 	docker network rm "$net" >/dev/null 2>&1
+	rm -rf "$tmp"
 }
 trap cleanup EXIT
 
@@ -113,7 +117,8 @@ cargo_project() {
 		cargo fetch
 	EOF
 }
-expect_ok "cargo fetch itoa through the proxy" client rust:1-slim sh -c "$(cargo_project 'itoa = "1"') 2>&1 | tee /dev/stderr | grep -q 'pkgwarden'"
+# grep without -q reads to the end: an early exit would kill cargo with SIGPIPE before it downloads.
+expect_ok "cargo fetch itoa through the proxy" client rust:1-slim sh -c "$(cargo_project 'itoa = "1"') 2>&1 | tee /dev/stderr | grep 'Downloaded itoa .*pkgwarden' >/dev/null"
 expect_refused "cargo fetch smallvec =1.6.0 (vulnerable)" "failed to select a version" \
 	client rust:1-slim sh -c "$(cargo_project 'smallvec = "=1.6.0"')"
 expect_403 "crate smallvec 1.6.0 names the advisory" /cargo/api/v1/crates/smallvec/1.6.0/download "vulnerability|GHSA|RUSTSEC"
@@ -135,6 +140,54 @@ expect_403 "gem rack 2.2.3 names the advisory" /rubygems/gems/rack-2.2.3.gem "vu
 
 echo "== check API"
 curl -s "$host/api/v1/check?ecosystem=npm&name=lodash&version=4.17.20" | head -c 600; echo
+
+echo "== metrics"
+# metric_sum NAME SUBSTRING... sums the series of NAME whose labels contain every SUBSTRING.
+metric_sum() {
+	local name=$1
+	shift
+	awk -v name="$name" -v want="$*" '
+		index($1, name "{") == 1 {
+			n = split(want, w, " "); ok = 1
+			for (i = 1; i <= n; i++) if (!index($1, w[i])) ok = 0
+			if (ok) s += $NF
+		}
+		END { print s + 0 }' <<<"$metrics"
+}
+metrics=$(curl -s "$host/metrics")
+for eco in npm pypi rubygems go cargo; do
+	served=$(metric_sum pkgwarden_artifacts_served_total "ecosystem=\"$eco\"")
+	blocked=$(metric_sum pkgwarden_decisions_total "ecosystem=\"$eco\"" 'decision="block"')
+	if awk -v a="$served" -v b="$blocked" 'BEGIN { exit !(a > 0 && b > 0) }'; then
+		pass "$eco metrics: $served artifacts served, $blocked blocks"
+	else
+		fail "$eco metrics: $served artifacts served, $blocked blocks, want both positive"
+	fi
+done
+
+echo "== tracing"
+# log_has ID MSG waits briefly for a log line with message MSG and request_id ID.
+log_has() {
+	for _ in 1 2 3 4 5; do
+		docker logs pkgwarden 2>&1 | grep -qF "\"msg\":\"$2\",\"request_id\":\"$1\"" && return 0
+		sleep 1
+	done
+	return 1
+}
+id=e2e-trace-$RANDOM$RANDOM
+code=$(curl -s -o /dev/null -w '%{http_code}' -H "X-Request-Id: $id" "$host/npm/ms/-/ms-2.1.3.tgz")
+if [[ $code == 200 ]] && log_has "$id" request && log_has "$id" upstream; then
+	pass "allowed download $id has request and upstream log lines"
+else
+	fail "allowed download $id: HTTP $code"; docker logs pkgwarden 2>&1 | grep -F "$id" | tail -5
+fi
+body=$(curl -s -D "$tmp/headers" "$host/npm/lodash/-/lodash-4.17.20.tgz")
+id=$(awk -F': ' 'tolower($1) == "x-request-id" { sub(/\r$/, "", $2); print $2 }' "$tmp/headers")
+if [[ -n $id && $body == *"(request $id)\"}" ]] && log_has "$id" request && log_has "$id" blocked; then
+	pass "blocked download names request $id, which has request and blocked log lines"
+else
+	fail "blocked download: request ID '$id', body: $(head -c 300 <<<"$body")"
+fi
 
 echo
 if ((fails)); then echo "$fails check(s) failed; proxy log in e2e-pkgwarden.log"; exit 1; fi
