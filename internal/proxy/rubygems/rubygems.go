@@ -66,8 +66,8 @@ func New(o Options) *Registry {
 		r.http = proxy.NewUpstream(http.DefaultClient, "pkgwarden", time.Minute)
 	}
 	r.mux.HandleFunc("GET /info/{name}", r.serveInfo)
-	r.mux.HandleFunc("GET /gems/{file}", r.serveArtifact(".gem"))
-	r.mux.HandleFunc("GET /quick/Marshal.4.8/{file}", r.serveArtifact(".gemspec.rz"))
+	r.mux.HandleFunc("GET /gems/{file}", r.serveArtifact(".gem", true))
+	r.mux.HandleFunc("GET /quick/Marshal.4.8/{file}", r.serveArtifact(".gemspec.rz", false))
 	r.mux.HandleFunc("GET /", func(w http.ResponseWriter, req *http.Request) {
 		r.relay(w, req, r.upstream+req.URL.EscapedPath())
 	})
@@ -153,25 +153,28 @@ func (r *Registry) serveInfo(w http.ResponseWriter, req *http.Request) {
 	name := req.PathValue("name")
 	var body []byte
 	var pkg *policy.Package
-	g, ctx := errgroup.WithContext(req.Context())
+	g, gctx := errgroup.WithContext(req.Context())
 	g.Go(func() (err error) {
-		body, err = r.http.Fetch(ctx, r.upstream+"/info/"+url.PathEscape(name), nil)
+		body, err = r.http.Fetch(gctx, r.upstream+"/info/"+url.PathEscape(name), nil)
 		return err
 	})
 	g.Go(func() (err error) {
-		pkg, err = r.Package(ctx, name)
+		pkg, err = r.Package(gctx, name)
 		return err
 	})
 	if err := g.Wait(); err != nil {
 		proxy.WriteError(w, err)
 		return
 	}
-	a := r.engine.Assess(req.Context(), pkg)
+	ctx := req.Context()
+	a := r.engine.Assess(ctx, pkg)
+	s := proxy.Subject{Ecosystem: ecosystem.RubyGems, Name: name}
 	if a.Package.Decision == policy.Block {
-		w.Header().Set("X-Pkgwarden-Decision", a.Package.Decision.String())
-		slog.InfoContext(req.Context(), "hiding every version", "subject", "rubygems/"+name, "findings", a.Package.Findings)
+		rules := proxy.RecordVerdict(w, proxy.StageMetadata, s, a.Package)
+		slog.InfoContext(ctx, "hiding every version", "ecosystem", string(s.Ecosystem), "package", name,
+			"stage", string(proxy.StageMetadata), "rules", rules, "findings", a.Package.Findings)
 	} else {
-		proxy.Enforce(w, proxy.Text, "rubygems/"+name, a.Package)
+		proxy.Enforce(ctx, w, proxy.Text, proxy.StageMetadata, s, a.Package)
 	}
 	writeInfo(w, req, filterInfo(body, a.Allowed))
 }
@@ -224,24 +227,37 @@ func etagMatches(ifNoneMatch, etag string) bool {
 
 // serveArtifact enforces the policy on a file named
 // <name>-<version>[-<platform>]<suffix> before streaming it from upstream.
-func (r *Registry) serveArtifact(suffix string) http.HandlerFunc {
+// A package file (a .gem, not a gemspec) counts in the artifact metrics.
+func (r *Registry) serveArtifact(suffix string, packageFile bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
+		ctx := req.Context()
 		target := r.upstream + req.URL.EscapedPath()
 		base, ok := strings.CutSuffix(req.PathValue("file"), suffix)
 		if !ok {
 			r.relay(w, req, target)
 			return
 		}
-		pkg, version, err := r.resolve(req.Context(), base)
+		pkg, version, err := r.resolve(ctx, base)
 		if err != nil {
 			proxy.WriteError(w, err)
 			return
 		}
-		v := r.engine.Assess(req.Context(), pkg).Release(version)
-		if !proxy.Enforce(w, proxy.Text, "rubygems/"+pkg.Name+"@"+version, v) {
+		s := proxy.Subject{Ecosystem: ecosystem.RubyGems, Name: pkg.Name, Version: version}
+		v := r.engine.Assess(ctx, pkg).Release(version)
+		if !proxy.Enforce(ctx, w, proxy.Text, proxy.StageArtifact, s, v) {
 			return
 		}
-		r.relay(w, req, target)
+		if !packageFile || req.Method == http.MethodHead {
+			r.relay(w, req, target)
+			return
+		}
+		resp, err := r.open(req, target)
+		if err != nil {
+			proxy.WriteError(w, err)
+			return
+		}
+		defer resp.Body.Close()
+		proxy.ServeArtifact(ctx, w, s, resp)
 	}
 }
 
@@ -292,19 +308,9 @@ func parseFileName(base string) []fileName {
 
 var forwardHeaders = []string{"Range", "If-None-Match", "If-Modified-Since", "Accept-Encoding"}
 
-// relay streams target to w unchanged, carrying the client's conditional
-// and range headers so 206 and 304 answers pass through.
+// relay streams target to w unchanged.
 func (r *Registry) relay(w http.ResponseWriter, req *http.Request, target string) {
-	if req.URL.RawQuery != "" {
-		target += "?" + req.URL.RawQuery
-	}
-	h := http.Header{}
-	for _, k := range forwardHeaders {
-		if v := req.Header.Values(k); len(v) > 0 {
-			h[k] = v
-		}
-	}
-	resp, err := r.http.Open(req.Context(), target, h)
+	resp, err := r.open(req, target)
 	if err != nil {
 		proxy.WriteError(w, err)
 		return
@@ -314,4 +320,19 @@ func (r *Registry) relay(w http.ResponseWriter, req *http.Request, target string
 		resp.Body = http.NoBody
 	}
 	proxy.Relay(w, resp)
+}
+
+// open issues the upstream GET for target, carrying the client's query and
+// its conditional and range headers so 206 and 304 answers pass through.
+func (r *Registry) open(req *http.Request, target string) (*http.Response, error) {
+	if req.URL.RawQuery != "" {
+		target += "?" + req.URL.RawQuery
+	}
+	h := http.Header{}
+	for _, k := range forwardHeaders {
+		if v := req.Header.Values(k); len(v) > 0 {
+			h[k] = v
+		}
+	}
+	return r.http.Open(req.Context(), target, h)
 }

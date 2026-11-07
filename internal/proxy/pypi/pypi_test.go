@@ -17,6 +17,7 @@ import (
 	"github.com/pogao/pkgwarden/internal/ecosystem"
 	"github.com/pogao/pkgwarden/internal/policy"
 	"github.com/pogao/pkgwarden/internal/proxy"
+	"github.com/pogao/pkgwarden/internal/telemetry/telemetrytest"
 )
 
 const day = 24 * time.Hour
@@ -254,17 +255,27 @@ func TestFiles(t *testing.T) {
 		status     int
 		body       []byte
 		bodyHas    string
+		artifact   bool
 	}{
-		{"allowed wheel streams upstream bytes", "/pypi/files/demo-pkg/1.0.0/demo_pkg-1.0.0-py3-none-any.whl", http.StatusOK, wheelBytes, ""},
-		{"PEP 658 metadata", "/pypi/files/demo-pkg/1.0.0/demo_pkg-1.0.0-py3-none-any.whl.metadata", http.StatusOK, metadataBytes, ""},
-		{"release inside cooldown", "/pypi/files/demo-pkg/1.1.0/demo_pkg-1.1.0-py3-none-any.whl", http.StatusForbidden, nil, "cooldown"},
-		{"unpublished version", "/pypi/files/demo-pkg/9.9.9/demo_pkg-9.9.9.tar.gz", http.StatusForbidden, nil, "not published upstream"},
-		{"filename from another release", "/pypi/files/demo-pkg/1.0.0/demo_pkg-1.1.0-py3-none-any.whl", http.StatusNotFound, nil, ""},
-		{"metadata upstream lacks", "/pypi/files/demo-pkg/1.0.0/demo_pkg-1.0.0.tar.gz.metadata", http.StatusNotFound, nil, ""},
-		{"file URL outside the files host", "/pypi/files/demo-pkg/0.8.0/demo_pkg-0.8.0.tar.gz", http.StatusBadGateway, nil, "not under"},
+		{"allowed wheel streams upstream bytes", "/pypi/files/demo-pkg/1.0.0/demo_pkg-1.0.0-py3-none-any.whl", http.StatusOK, wheelBytes, "", true},
+		{"PEP 658 metadata", "/pypi/files/demo-pkg/1.0.0/demo_pkg-1.0.0-py3-none-any.whl.metadata", http.StatusOK, metadataBytes, "", false},
+		{"release inside cooldown", "/pypi/files/demo-pkg/1.1.0/demo_pkg-1.1.0-py3-none-any.whl", http.StatusForbidden, nil, "cooldown", false},
+		{"unpublished version", "/pypi/files/demo-pkg/9.9.9/demo_pkg-9.9.9.tar.gz", http.StatusForbidden, nil, "not published upstream", false},
+		{"filename from another release", "/pypi/files/demo-pkg/1.0.0/demo_pkg-1.1.0-py3-none-any.whl", http.StatusNotFound, nil, "", false},
+		{"metadata upstream lacks", "/pypi/files/demo-pkg/1.0.0/demo_pkg-1.0.0.tar.gz.metadata", http.StatusNotFound, nil, "", false},
+		{"file URL outside the files host", "/pypi/files/demo-pkg/0.8.0/demo_pkg-0.8.0.tar.gz", http.StatusBadGateway, nil, "not under", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			before := telemetrytest.Value(t, "pkgwarden_artifacts_served_total", map[string]string{"ecosystem": "pypi"})
 			resp := get(t, base+tc.path, "")
+			served := telemetrytest.Value(t, "pkgwarden_artifacts_served_total", map[string]string{"ecosystem": "pypi"}) - before
+			want := 0.0
+			if tc.artifact {
+				want = 1
+			}
+			if served != want {
+				t.Errorf("artifacts_served_total grew by %v, want %v", served, want)
+			}
 			if resp.status != tc.status {
 				t.Fatalf("status %d, want %d: %s", resp.status, tc.status, resp.body)
 			}

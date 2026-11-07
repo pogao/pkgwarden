@@ -32,6 +32,22 @@ var (
 		Namespace: "pkgwarden", Name: "http_request_duration_seconds",
 		Help: "Inbound request latency, by ecosystem.", Buckets: latencyBuckets,
 	}, []string{"ecosystem"})
+	decisions = metric.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "pkgwarden", Name: "decisions_total",
+		Help: "Policy decisions applied, by ecosystem, stage (metadata or artifact) and decision (allow, warn or block).",
+	}, []string{"ecosystem", "stage", "decision"})
+	findings = metric.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "pkgwarden", Name: "findings_total",
+		Help: "Rules behind warn and block decisions, each rule counted once per decision.",
+	}, []string{"ecosystem", "stage", "rule", "decision"})
+	artifactsServed = metric.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "pkgwarden", Name: "artifacts_served_total",
+		Help: "Package files relayed to clients, by ecosystem.",
+	}, []string{"ecosystem"})
+	artifactBytes = metric.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "pkgwarden", Name: "artifact_bytes_total",
+		Help: "Bytes of package files relayed to clients, by ecosystem.",
+	}, []string{"ecosystem"})
 	upstreamRequests = metric.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "pkgwarden", Name: "upstream_requests_total",
 		Help: `Outbound requests, by host and status code ("error" when no response arrived).`,
@@ -49,4 +65,19 @@ func init() {
 // Handler serves every metric in the Prometheus exposition format.
 func Handler() http.Handler {
 	return promhttp.HandlerFor(registry, promhttp.HandlerOpts{})
+}
+
+// RecordDecision counts one policy decision and, once each, the distinct
+// rules behind it.
+func RecordDecision(ecosystem, stage, decision string, rules []string) {
+	decisions.WithLabelValues(ecosystem, stage, decision).Inc()
+	for _, r := range rules {
+		findings.WithLabelValues(ecosystem, stage, r, decision).Inc()
+	}
+}
+
+// RecordArtifact counts a package file of n bytes relayed to a client.
+func RecordArtifact(ecosystem string, n int64) {
+	artifactsServed.WithLabelValues(ecosystem).Inc()
+	artifactBytes.WithLabelValues(ecosystem).Add(float64(n))
 }

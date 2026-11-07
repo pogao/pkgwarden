@@ -8,12 +8,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"time"
 
 	"golang.org/x/sync/singleflight"
 
 	"github.com/pogao/pkgwarden/internal/cache"
+	"github.com/pogao/pkgwarden/internal/telemetry"
 )
 
 // ErrNotFound reports that the upstream registry has no such resource.
@@ -120,13 +122,32 @@ var relayHeaders = []string{
 
 // Relay copies an upstream response to w.
 func Relay(w http.ResponseWriter, resp *http.Response) {
+	relay(w, resp)
+}
+
+// ServeArtifact relays an upstream response carrying a release's file and,
+// when upstream answered 200 or 206, counts the file and the bytes copied
+// in the artifact metrics.
+func ServeArtifact(ctx context.Context, w http.ResponseWriter, s Subject, resp *http.Response) {
+	n, err := relay(w, resp)
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
+		return
+	}
+	telemetry.RecordArtifact(string(s.Ecosystem), n)
+	if err != nil {
+		slog.WarnContext(ctx, "artifact relay interrupted", "ecosystem", string(s.Ecosystem), "package", s.Name,
+			"version", s.Version, "bytes", n, "err", err)
+	}
+}
+
+func relay(w http.ResponseWriter, resp *http.Response) (int64, error) {
 	for _, h := range relayHeaders {
 		if v := resp.Header.Get(h); v != "" {
 			w.Header().Set(h, v)
 		}
 	}
 	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
+	return io.Copy(w, resp.Body)
 }
 
 // WriteError maps an upstream failure to a response.

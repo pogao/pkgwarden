@@ -21,6 +21,7 @@ import (
 	"github.com/pogao/pkgwarden/internal/policy"
 	"github.com/pogao/pkgwarden/internal/proxy"
 	"github.com/pogao/pkgwarden/internal/proxy/rubygems"
+	"github.com/pogao/pkgwarden/internal/telemetry/telemetrytest"
 )
 
 const day = 24 * time.Hour
@@ -213,8 +214,18 @@ func TestPackageWideAdvisoryHidesEveryVersion(t *testing.T) {
 		Summary: "Malicious code in nokogiri (rubygems)",
 	}}}
 	srv := newProxy(t, map[string]fakeGem{"nokogiri": nokogiri(t)}, advs)
+	block := map[string]string{"ecosystem": "rubygems", "stage": "metadata", "decision": "block"}
+	malicious := map[string]string{"ecosystem": "rubygems", "stage": "metadata", "rule": "advisory/malicious", "decision": "block"}
+	beforeBlock := telemetrytest.Value(t, "pkgwarden_decisions_total", block)
+	beforeMalicious := telemetrytest.Value(t, "pkgwarden_findings_total", malicious)
 
 	info := get(t, "GET", srv.URL+"/rubygems/info/nokogiri", nil)
+	if d := telemetrytest.Value(t, "pkgwarden_decisions_total", block) - beforeBlock; d != 1 {
+		t.Errorf("decisions_total%v grew by %v, want 1", block, d)
+	}
+	if d := telemetrytest.Value(t, "pkgwarden_findings_total", malicious) - beforeMalicious; d != 1 {
+		t.Errorf("findings_total%v grew by %v, want 1", malicious, d)
+	}
 	if info.status != http.StatusOK || string(info.body) != "---\n" {
 		t.Errorf("info: status %d body %q, want 200 with only the header", info.status, info.body)
 	}
@@ -246,7 +257,17 @@ func TestArtifactEnforcement(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.path, func(t *testing.T) {
+			before := telemetrytest.Value(t, "pkgwarden_artifacts_served_total", map[string]string{"ecosystem": "rubygems"})
 			resp := get(t, "GET", srv.URL+"/rubygems"+tt.path, nil)
+			served := telemetrytest.Value(t, "pkgwarden_artifacts_served_total", map[string]string{"ecosystem": "rubygems"}) - before
+			gem := tt.wantStatus == http.StatusOK && strings.HasSuffix(tt.path, ".gem")
+			want := 0.0
+			if gem {
+				want = 1
+			}
+			if served != want {
+				t.Errorf("artifacts_served_total grew by %v, want %v", served, want)
+			}
 			if resp.status != tt.wantStatus || string(resp.body) != tt.wantBody {
 				t.Errorf("status %d body %q, want %d %q", resp.status, resp.body, tt.wantStatus, tt.wantBody)
 			}
