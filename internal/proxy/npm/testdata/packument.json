@@ -1,0 +1,121 @@
+{
+  "_id": "__NAME__",
+  "_rev": "9-6f3d1c2b8a7e4f0d9c1b2a3e4f5d6c7b",
+  "name": "__NAME__",
+  "dist-tags": {
+    "latest": "1.1.0",
+    "next": "2.0.0-rc.1",
+    "legacy": "0.9.0",
+    "v3": "3.0.0"
+  },
+  "versions": {
+    "0.9.0": {
+      "name": "__NAME__",
+      "version": "0.9.0",
+      "main": "index.js",
+      "license": "ISC",
+      "scripts": {"test": "tap"},
+      "_id": "__NAME__@0.9.0",
+      "_nodeVersion": "16.5.0",
+      "_npmVersion": "7.23.0",
+      "dist": {
+        "integrity": "sha512-R3acQDJm066Tr5Gb+OhiEkKyy94F2p6dkcUI6J8KQuinqgg5HszX/H4vepKxREDbiVR9pGKOD9Jo+RTDux+zLA==",
+        "shasum": "2bbd680395d205a022b76aa01910f6d1c48cf948",
+        "tarball": "__REGISTRY__/__NAME__/-/__UNSCOPED__-0.9.0.tgz",
+        "fileCount": 4,
+        "unpackedSize": 2414,
+        "signatures": [{"keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA", "sig": "MEQCIGQIb168FJrWHmlY"}]
+      },
+      "_npmUser": {"name": "alice", "email": "alice@example.com"},
+      "directories": {},
+      "maintainers": [{"name": "alice", "email": "alice@example.com"}],
+      "_hasShrinkwrap": false
+    },
+    "1.0.0": {
+      "name": "__NAME__",
+      "version": "1.0.0",
+      "main": "index.js",
+      "license": "ISC",
+      "scripts": {"test": "tap", "prepublishOnly": "git push origin --follow-tags"},
+      "_id": "__NAME__@1.0.0",
+      "dist": {
+        "integrity": "sha512-a2bc",
+        "shasum": "1111111111111111111111111111111111111111",
+        "tarball": "__REGISTRY__/__NAME__/-/__UNSCOPED__-1.0.0.tgz",
+        "fileCount": 4,
+        "unpackedSize": 2500
+      },
+      "directories": {},
+      "maintainers": [{"name": "alice", "email": "alice@example.com"}],
+      "_hasShrinkwrap": false
+    },
+    "1.0.1-beta.0": {
+      "name": "__NAME__",
+      "version": "1.0.1-beta.0",
+      "_id": "__NAME__@1.0.1-beta.0",
+      "dist": {
+        "integrity": "sha512-b3cd",
+        "shasum": "2222222222222222222222222222222222222222",
+        "tarball": "__REGISTRY__/__NAME__/-/__UNSCOPED__-1.0.1-beta.0.tgz"
+      },
+      "_npmUser": {"name": "alice", "email": "alice@example.com"},
+      "_hasShrinkwrap": false
+    },
+    "1.1.0": {
+      "name": "__NAME__",
+      "version": "1.1.0",
+      "scripts": {"test": "tap", "postinstall": "node setup.js"},
+      "_id": "__NAME__@1.1.0",
+      "dist": {
+        "integrity": "sha512-c4de",
+        "shasum": "3333333333333333333333333333333333333333",
+        "tarball": "__REGISTRY__/__NAME__/-/__UNSCOPED__-1.1.0.tgz"
+      },
+      "_npmUser": {"name": "mallory", "email": "mallory@example.com"},
+      "_hasShrinkwrap": false
+    },
+    "3.0.0": {
+      "name": "__NAME__",
+      "version": "3.0.0",
+      "_id": "__NAME__@3.0.0",
+      "dist": {
+        "integrity": "sha512-e6f0",
+        "shasum": "5555555555555555555555555555555555555555",
+        "tarball": "__REGISTRY__/__NAME__/-/__UNSCOPED__-3.0.0.tgz"
+      },
+      "_npmUser": {"name": "alice", "email": "alice@example.com"},
+      "_hasShrinkwrap": false
+    },
+    "2.0.0-rc.1": {
+      "name": "__NAME__",
+      "version": "2.0.0-rc.1",
+      "_id": "__NAME__@2.0.0-rc.1",
+      "dist": {
+        "integrity": "sha512-d5ef",
+        "shasum": "4444444444444444444444444444444444444444",
+        "tarball": "__REGISTRY__/__NAME__/-/__UNSCOPED__-2.0.0-rc.1.tgz"
+      },
+      "_npmUser": {"name": "alice", "email": "alice@example.com"},
+      "_hasShrinkwrap": false
+    }
+  },
+  "time": {
+    "created": "__OLD__",
+    "0.9.0": "__OLD__",
+    "1.0.0": "__OLD__",
+    "1.0.1-beta.0": "__OLD__",
+    "3.0.0": "__OLD__",
+    "modified": "__YOUNG__",
+    "1.1.0": "__YOUNG__",
+    "2.0.0-rc.1": "__YOUNG__"
+  },
+  "maintainers": [{"name": "alice", "email": "alice@example.com"}, {"name": "bob", "email": "bob@example.com"}],
+  "description": "Compare strings <fast> & safe",
+  "homepage": "https://github.com/acme/widget#readme",
+  "repository": {"type": "git", "url": "git+https://github.com/acme/widget.git"},
+  "author": {"name": "Alice", "email": "alice@example.com"},
+  "bugs": {"url": "https://github.com/acme/widget/issues"},
+  "license": "ISC",
+  "readme": "# widget\n\nUse `<Widget />` & enjoy.",
+  "readmeFilename": "README.md"
+}
