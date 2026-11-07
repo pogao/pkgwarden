@@ -44,11 +44,7 @@ func main() {
 }
 
 func run(ctx context.Context, cfg *config) error {
-	var level slog.Level
-	if err := level.UnmarshalText([]byte(cfg.logLevel)); err != nil {
-		return fmt.Errorf("-log-level: %w", err)
-	}
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: level})))
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: cfg.logLevel})))
 
 	client := &http.Client{Transport: &http.Transport{
 		Proxy:                 http.ProxyFromEnvironment,

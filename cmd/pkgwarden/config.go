@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 	"time"
@@ -17,7 +18,7 @@ type config struct {
 	publicURL   string
 	metadataTTL time.Duration
 	advisoryTTL time.Duration
-	logLevel    string
+	logLevel    slog.Level
 
 	osvURL         string
 	ghsaToken      string
@@ -43,7 +44,7 @@ func parseConfig(args []string) (*config, error) {
 	fs.StringVar(&c.publicURL, "public-url", "", "externally visible base URL, used in rewritten download links (default: derived from each request)")
 	fs.DurationVar(&c.metadataTTL, "metadata-ttl", 5*time.Minute, "how long upstream metadata is cached")
 	fs.DurationVar(&c.advisoryTTL, "advisory-ttl", time.Hour, "how long advisory lookups are cached")
-	fs.StringVar(&c.logLevel, "log-level", "info", "debug, info, warn or error")
+	fs.TextVar(&c.logLevel, "log-level", slog.LevelInfo, "debug, info, warn or error")
 
 	fs.DurationVar(&c.policy.Cooldown, "cooldown", 7*24*time.Hour, "minimum age of a release before it is served (0 disables)")
 	fs.StringVar(&blockSeverity, "block-severity", "high", "lowest vulnerability rating that blocks a release: low, medium, high, critical or none (lower and unrated ones warn; malicious releases always block)")

@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"flag"
+	"log/slog"
 	"os"
 	"strings"
 	"testing"
@@ -134,3 +135,42 @@ func TestGHSATokenPrecedence(t *testing.T) {
 }
 
 func ptr(s string) *string { return &s }
+
+func TestLogLevel(t *testing.T) {
+	tests := []struct {
+		args []string
+		want slog.Level
+	}{
+		{nil, slog.LevelInfo},
+		{[]string{"-log-level", "debug"}, slog.LevelDebug},
+		{[]string{"-log-level", "WARN"}, slog.LevelWarn},
+		{[]string{"-log-level", "error"}, slog.LevelError},
+	}
+	for _, tt := range tests {
+		t.Run(strings.Join(tt.args, " "), func(t *testing.T) {
+			unsetEnv(t, "PKGWARDEN_LOG_LEVEL")
+			c, err := parseConfig(tt.args)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if c.logLevel != tt.want {
+				t.Errorf("logLevel = %v, want %v", c.logLevel, tt.want)
+			}
+		})
+	}
+}
+
+func TestLogLevelInvalid(t *testing.T) {
+	t.Run("flag", func(t *testing.T) {
+		unsetEnv(t, "PKGWARDEN_LOG_LEVEL")
+		if _, err := parseConfig([]string{"-log-level", "loud"}); err == nil {
+			t.Error("parseConfig accepted -log-level loud")
+		}
+	})
+	t.Run("environment", func(t *testing.T) {
+		t.Setenv("PKGWARDEN_LOG_LEVEL", "loud")
+		if _, err := parseConfig(nil); err == nil {
+			t.Error("parseConfig accepted PKGWARDEN_LOG_LEVEL=loud")
+		}
+	})
+}
