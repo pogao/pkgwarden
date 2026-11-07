@@ -24,6 +24,7 @@ import (
 	"github.com/pogao/pkgwarden/internal/proxy/npm"
 	"github.com/pogao/pkgwarden/internal/proxy/pypi"
 	"github.com/pogao/pkgwarden/internal/proxy/rubygems"
+	"github.com/pogao/pkgwarden/internal/telemetry"
 )
 
 func main() {
@@ -44,9 +45,9 @@ func main() {
 }
 
 func run(ctx context.Context, cfg *config) error {
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: cfg.logLevel})))
+	slog.SetDefault(slog.New(telemetry.NewLogHandler(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: cfg.logLevel}))))
 
-	client := &http.Client{Transport: &http.Transport{
+	client := &http.Client{Transport: telemetry.Transport(&http.Transport{
 		Proxy:                 http.ProxyFromEnvironment,
 		DialContext:           (&net.Dialer{Timeout: 10 * time.Second}).DialContext,
 		ForceAttemptHTTP2:     true,
@@ -54,7 +55,7 @@ func run(ctx context.Context, cfg *config) error {
 		IdleConnTimeout:       90 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
 		ResponseHeaderTimeout: 60 * time.Second,
-	}}
+	})}
 
 	sources := []advisory.Source{advisory.NewOSV(client, cfg.osvURL)}
 	if cfg.ghsaToken != "" {
@@ -81,7 +82,7 @@ func run(ctx context.Context, cfg *config) error {
 		return err
 	}
 	srv := &http.Server{
-		Handler:           handler,
+		Handler:           telemetry.Middleware(handler),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       2 * time.Minute,
 	}

@@ -167,7 +167,7 @@ func (r *Registry) weeklyDownloads(ctx context.Context, name string) int64 {
 	}
 	err := r.o.HTTP.FetchJSON(ctx, r.o.Stats+"/api/packages/"+url.PathEscape(name)+"/recent", &doc)
 	if err != nil || doc.Data.LastWeek == nil {
-		slog.Debug("pypi download count unavailable", "project", name, "err", err)
+		slog.DebugContext(ctx, "pypi download count unavailable", "project", name, "err", err)
 		return policy.UnknownDownloads
 	}
 	return *doc.Data.LastWeek

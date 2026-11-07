@@ -169,7 +169,7 @@ func (r *Registry) serveInfo(w http.ResponseWriter, req *http.Request) {
 	a := r.engine.Assess(req.Context(), pkg)
 	if a.Package.Decision == policy.Block {
 		w.Header().Set("X-Pkgwarden-Decision", a.Package.Decision.String())
-		slog.Info("hiding every version", "subject", "rubygems/"+name, "findings", a.Package.Findings)
+		slog.InfoContext(req.Context(), "hiding every version", "subject", "rubygems/"+name, "findings", a.Package.Findings)
 	} else {
 		proxy.Enforce(w, proxy.Text, "rubygems/"+name, a.Package)
 	}
