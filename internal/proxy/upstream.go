@@ -52,9 +52,14 @@ func NewUpstream(client *http.Client, userAgent string, metaTTL time.Duration) *
 func (u *Upstream) Fetch(ctx context.Context, url string, header http.Header) ([]byte, error) {
 	key := header.Get("Accept") + " " + url
 	if b, ok := u.meta.Get(key); ok {
+		telemetry.RecordCache("metadata", true)
+		slog.DebugContext(ctx, "metadata cache hit", "url", url)
 		return b, nil
 	}
+	telemetry.RecordCache("metadata", false)
+	fetched := false
 	v, err, _ := u.group.Do(key, func() (any, error) {
+		fetched = true
 		resp, err := u.Open(ctx, url, header)
 		if err != nil {
 			return nil, err
@@ -73,6 +78,11 @@ func (u *Upstream) Fetch(ctx context.Context, url string, header http.Header) ([
 		u.meta.Set(key, b)
 		return b, nil
 	})
+	if !fetched {
+		// The upstream line for this fetch carries the request ID of the
+		// request that started it.
+		slog.DebugContext(ctx, "joined in-flight fetch", "url", url)
+	}
 	if err != nil {
 		return nil, err
 	}

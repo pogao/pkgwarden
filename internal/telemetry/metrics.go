@@ -9,6 +9,10 @@ package telemetry
 
 import (
 	"net/http"
+	"runtime"
+	"runtime/debug"
+	"strconv"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
@@ -56,10 +60,39 @@ var (
 		Namespace: "pkgwarden", Name: "upstream_request_duration_seconds",
 		Help: "Outbound latency until the response headers arrive, by host.", Buckets: latencyBuckets,
 	}, []string{"host"})
+	cacheRequests = metric.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "pkgwarden", Name: "cache_requests_total",
+		Help: "Cache lookups, by cache (metadata or advisory) and result (hit or miss).",
+	}, []string{"cache", "result"})
+	openSSFLastSuccess = metric.NewGauge(prometheus.GaugeOpts{
+		Namespace: "pkgwarden", Name: "openssf_last_success_timestamp_seconds",
+		Help: "Unix time of the last successful OpenSSF dataset load; 0 until the first.",
+	})
+	openSSFPackages = metric.NewGauge(prometheus.GaugeOpts{
+		Namespace: "pkgwarden", Name: "openssf_packages",
+		Help: "Packages in the loaded OpenSSF malicious-packages index.",
+	})
+	openSSFFailures = metric.NewCounter(prometheus.CounterOpts{
+		Namespace: "pkgwarden", Name: "openssf_refresh_failures_total",
+		Help: "Failed OpenSSF dataset refreshes.",
+	})
+	policyInfo = metric.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: "pkgwarden", Name: "policy_info",
+		Help: "The policy in effect, as labels on a constant 1.",
+	}, []string{"cooldown", "block_severity", "fail_open", "heuristics", "heuristics_warn", "heuristics_block"})
+	buildInfo = metric.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: "pkgwarden", Name: "build_info",
+		Help: "The running build, as labels on a constant 1.",
+	}, []string{"version", "go_version"})
 )
 
 func init() {
 	registry.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
+	version := "unknown"
+	if bi, ok := debug.ReadBuildInfo(); ok {
+		version = bi.Main.Version
+	}
+	buildInfo.WithLabelValues(version, runtime.Version()).Set(1)
 }
 
 // Handler serves every metric in the Prometheus exposition format.
@@ -80,4 +113,39 @@ func RecordDecision(ecosystem, stage, decision string, rules []string) {
 func RecordArtifact(ecosystem string, n int64) {
 	artifactsServed.WithLabelValues(ecosystem).Inc()
 	artifactBytes.WithLabelValues(ecosystem).Add(float64(n))
+}
+
+// RecordCache counts a lookup in the named cache.
+func RecordCache(cache string, hit bool) {
+	result := "miss"
+	if hit {
+		result = "hit"
+	}
+	cacheRequests.WithLabelValues(cache, result).Inc()
+}
+
+// RecordOpenSSFLoad records a successful OpenSSF dataset load.
+func RecordOpenSSFLoad(packages int, at time.Time) {
+	openSSFPackages.Set(float64(packages))
+	openSSFLastSuccess.Set(float64(at.Unix()))
+}
+
+// RecordOpenSSFFailure counts a failed OpenSSF dataset refresh.
+func RecordOpenSSFFailure() { openSSFFailures.Inc() }
+
+// Policy describes the policy in effect for the policy_info metric.
+type Policy struct {
+	Cooldown        time.Duration
+	BlockSeverity   string
+	FailOpen        bool
+	Heuristics      bool
+	HeuristicsWarn  int
+	HeuristicsBlock int
+}
+
+// SetPolicy publishes p as the policy in effect.
+func SetPolicy(p Policy) {
+	policyInfo.Reset()
+	policyInfo.WithLabelValues(p.Cooldown.String(), p.BlockSeverity, strconv.FormatBool(p.FailOpen),
+		strconv.FormatBool(p.Heuristics), strconv.Itoa(p.HeuristicsWarn), strconv.Itoa(p.HeuristicsBlock)).Set(1)
 }

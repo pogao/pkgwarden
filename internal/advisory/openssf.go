@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/pogao/pkgwarden/internal/ecosystem"
+	"github.com/pogao/pkgwarden/internal/telemetry"
 )
 
 const (
@@ -73,6 +74,7 @@ func (o *OpenSSF) Refresh(ctx context.Context) error {
 		return fmt.Errorf("openssf refresh: %w", err)
 	}
 	o.index.Store(&idx)
+	telemetry.RecordOpenSSFLoad(len(idx), time.Now())
 	return nil
 }
 
@@ -92,6 +94,7 @@ func (o *OpenSSF) Run(ctx context.Context, interval time.Duration) {
 				return
 			}
 			slog.ErrorContext(ctx, "advisory dataset refresh failed", "source", "openssf", "err", err)
+			telemetry.RecordOpenSSFFailure()
 			wait = min(retry, interval)
 			retry = min(2*retry, interval)
 		} else {

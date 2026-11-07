@@ -14,11 +14,12 @@ import (
 )
 
 type config struct {
-	listen      string
-	publicURL   string
-	metadataTTL time.Duration
-	advisoryTTL time.Duration
-	logLevel    slog.Level
+	listen        string
+	metricsListen string
+	publicURL     string
+	metadataTTL   time.Duration
+	advisoryTTL   time.Duration
+	logLevel      slog.Level
 
 	osvURL         string
 	ghsaToken      string
@@ -41,6 +42,7 @@ func parseConfig(args []string) (*config, error) {
 	)
 	fs := flag.NewFlagSet("pkgwarden", flag.ContinueOnError)
 	fs.StringVar(&c.listen, "listen", ":8080", "address to listen on")
+	fs.StringVar(&c.metricsListen, "metrics-listen", "", "address of a separate listener that alone serves /metrics (default: /metrics is served on -listen)")
 	fs.StringVar(&c.publicURL, "public-url", "", "externally visible base URL, used in rewritten download links (default: derived from each request)")
 	fs.DurationVar(&c.metadataTTL, "metadata-ttl", 5*time.Minute, "how long upstream metadata is cached")
 	fs.DurationVar(&c.advisoryTTL, "advisory-ttl", time.Hour, "how long advisory lookups are cached")
