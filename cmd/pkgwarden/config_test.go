@@ -1,6 +1,8 @@
 package main
 
 import (
+	"errors"
+	"flag"
 	"os"
 	"strings"
 	"testing"
@@ -71,3 +73,64 @@ func TestBlockSeverityInvalid(t *testing.T) {
 		})
 	}
 }
+
+func TestHelpHidesGitHubToken(t *testing.T) {
+	t.Setenv("GITHUB_TOKEN", "fake-token-123")
+	unsetEnv(t, "PKGWARDEN_GHSA_TOKEN")
+	out, err := os.CreateTemp(t.TempDir(), "help")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stderr := os.Stderr
+	os.Stderr = out
+	_, err = parseConfig([]string{"-h"})
+	os.Stderr = stderr
+	if !errors.Is(err, flag.ErrHelp) {
+		t.Fatalf("err = %v, want flag.ErrHelp", err)
+	}
+	help, err := os.ReadFile(out.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(help), "-ghsa-token") {
+		t.Fatalf("help output lacks -ghsa-token:\n%s", help)
+	}
+	if strings.Contains(string(help), "fake-token-123") {
+		t.Errorf("help output prints the GitHub token:\n%s", help)
+	}
+}
+
+func TestGHSATokenPrecedence(t *testing.T) {
+	tests := []struct {
+		name        string
+		githubToken string
+		envToken    *string
+		args        []string
+		want        string
+	}{
+		{name: "nothing set"},
+		{name: "GITHUB_TOKEN", githubToken: "gh", want: "gh"},
+		{name: "PKGWARDEN_GHSA_TOKEN wins over GITHUB_TOKEN", githubToken: "gh", envToken: ptr("env"), want: "env"},
+		{name: "empty PKGWARDEN_GHSA_TOKEN turns the source off", githubToken: "gh", envToken: ptr("")},
+		{name: "flag wins over both", githubToken: "gh", envToken: ptr("env"), args: []string{"-ghsa-token", "flag"}, want: "flag"},
+		{name: "empty flag turns the source off", githubToken: "gh", args: []string{"-ghsa-token", ""}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("GITHUB_TOKEN", tt.githubToken)
+			unsetEnv(t, "PKGWARDEN_GHSA_TOKEN")
+			if tt.envToken != nil {
+				t.Setenv("PKGWARDEN_GHSA_TOKEN", *tt.envToken)
+			}
+			c, err := parseConfig(tt.args)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if c.ghsaToken != tt.want {
+				t.Errorf("ghsaToken = %q, want %q", c.ghsaToken, tt.want)
+			}
+		})
+	}
+}
+
+func ptr(s string) *string { return &s }

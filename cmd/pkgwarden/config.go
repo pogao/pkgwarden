@@ -29,7 +29,8 @@ type config struct {
 
 // parseConfig reads flags, each of which can also be set through an
 // environment variable named PKGWARDEN_<FLAG> (upper case, dashes as
-// underscores). Command-line flags win over the environment.
+// underscores). Command-line flags win over the environment. -ghsa-token
+// falls back to GITHUB_TOKEN when neither sets it.
 func parseConfig(args []string) (*config, error) {
 	var (
 		c             config
@@ -56,7 +57,7 @@ func parseConfig(args []string) (*config, error) {
 	fs.IntVar(&h.BlockScore, "heuristics-block", 70, "heuristic score at which a release is blocked")
 
 	fs.StringVar(&c.osvURL, "osv-url", "https://api.osv.dev", "OSV API base URL")
-	fs.StringVar(&c.ghsaToken, "ghsa-token", os.Getenv("GITHUB_TOKEN"), "GitHub token; enables direct GitHub Advisory Database lookups (default $GITHUB_TOKEN)")
+	fs.StringVar(&c.ghsaToken, "ghsa-token", "", "GitHub token; enables direct GitHub Advisory Database lookups (default $GITHUB_TOKEN)")
 	fs.BoolVar(&c.openSSF, "openssf", false, "sync the OpenSSF malicious-packages dataset locally (about 300 MB download per refresh)")
 	fs.DurationVar(&c.openSSFRefresh, "openssf-refresh", 6*time.Hour, "how often the OpenSSF dataset is refreshed")
 
@@ -64,7 +65,7 @@ func parseConfig(args []string) (*config, error) {
 	fs.VisitAll(func(f *flag.Flag) {
 		key := "PKGWARDEN_" + strings.ToUpper(strings.ReplaceAll(f.Name, "-", "_"))
 		if v, ok := os.LookupEnv(key); ok && envErr == nil {
-			if err := f.Value.Set(v); err != nil {
+			if err := fs.Set(f.Name, v); err != nil {
 				envErr = fmt.Errorf("%s: %w", key, err)
 			}
 		}
@@ -74,6 +75,11 @@ func parseConfig(args []string) (*config, error) {
 	}
 	if err := fs.Parse(args); err != nil {
 		return nil, err
+	}
+	tokenSet := false
+	fs.Visit(func(f *flag.Flag) { tokenSet = tokenSet || f.Name == "ghsa-token" })
+	if !tokenSet {
+		c.ghsaToken = os.Getenv("GITHUB_TOKEN")
 	}
 
 	var err error
