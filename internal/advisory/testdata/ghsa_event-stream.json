@@ -1,0 +1,71 @@
+[
+ {
+  "ghsa_id": "GHSA-mh6f-8j2x-4483",
+  "cve_id": null,
+  "url": "https://api.github.com/advisories/GHSA-mh6f-8j2x-4483",
+  "html_url": "https://github.com/advisories/GHSA-mh6f-8j2x-4483",
+  "summary": "Critical severity vulnerability that affects event-stream and flatmap-stream",
+  "description": "The NPM package `flatmap-stream` is considered malicious.  A malicious actor added this package as a dependency to the NPM `event-stream` package in version `3.3.6`.  Users of `event-stream` are encouraged to downgrade to the last non-malicious version, `3.3.4`, or upgrade to the latest  4.x version. \n\nUsers of `flatmap-stream` are encouraged to remove the dependency entirely.\n",
+  "type": "reviewed",
+  "severity": "critical",
+  "repository_advisory_url": null,
+  "source_code_location": "https://github.com/dominictarr/event-stream",
+  "identifiers": [
+   {
+    "value": "GHSA-mh6f-8j2x-4483",
+    "type": "GHSA"
+   }
+  ],
+  "references": [
+   "https://github.com/dominictarr/event-stream/issues/116",
+   "https://github.com/advisories/GHSA-mh6f-8j2x-4483"
+  ],
+  "published_at": "2018-11-26T23:58:21Z",
+  "updated_at": "2023-01-12T05:08:40Z",
+  "github_reviewed_at": "2020-06-16T21:46:17Z",
+  "nvd_published_at": null,
+  "withdrawn_at": null,
+  "vulnerabilities": [
+   {
+    "package": {
+     "ecosystem": "npm",
+     "name": "event-stream"
+    },
+    "vulnerable_version_range": "= 3.3.6",
+    "first_patched_version": "4.0.0",
+    "vulnerable_functions": []
+   },
+   {
+    "package": {
+     "ecosystem": "npm",
+     "name": "flatmap-stream"
+    },
+    "vulnerable_version_range": ">= 0",
+    "first_patched_version": null,
+    "vulnerable_functions": []
+   }
+  ],
+  "cvss_severities": {
+   "cvss_v3": {
+    "vector_string": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+    "score": 9.8
+   },
+   "cvss_v4": {
+    "vector_string": null,
+    "score": 0.0
+   }
+  },
+  "cwes": [
+   {
+    "cwe_id": "CWE-506",
+    "name": "Embedded Malicious Code"
+   }
+  ],
+  "credits": [],
+  "comments": 0,
+  "cvss": {
+   "vector_string": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+   "score": 9.8
+  }
+ }
+]

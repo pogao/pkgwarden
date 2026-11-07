@@ -1,0 +1,344 @@
+[
+ {
+  "ghsa_id": "GHSA-cpwx-vrp4-4pq7",
+  "cve_id": "CVE-2025-27516",
+  "url": "https://api.github.com/advisories/GHSA-cpwx-vrp4-4pq7",
+  "html_url": "https://github.com/advisories/GHSA-cpwx-vrp4-4pq7",
+  "summary": "Jinja2 vulnerable to sandbox breakout through attr filter selecting format method",
+  "description": "An oversight in how the Jinja sandboxed environment interacts with the `|attr` filter allows an attacker that controls the content of a template to execute arbitrary Python code.\n\nTo exploit the vulnerability, an attacker needs to control the content of a template. Whether that is the case depends on the type of application using Jinja. This vulnerability impacts users of applications which execute untrusted templates.\n\nJinja's sandbox does catch calls to `str.format` and ensures they don't escape the sandbox. However, it's possible to use the `|attr` filter to get a reference to a string's plain format method, bypassing the sandbox. After the fix, the `|attr` filter no longer bypasses the environment's attribute lookup.",
+  "type": "reviewed",
+  "severity": "medium",
+  "repository_advisory_url": "https://api.github.com/repos/pallets/jinja/security-advisories/GHSA-cpwx-vrp4-4pq7",
+  "source_code_location": "https://github.com/pallets/jinja",
+  "identifiers": [
+   {
+    "value": "GHSA-cpwx-vrp4-4pq7",
+    "type": "GHSA"
+   },
+   {
+    "value": "CVE-2025-27516",
+    "type": "CVE"
+   }
+  ],
+  "references": [
+   "https://github.com/pallets/jinja/security/advisories/GHSA-cpwx-vrp4-4pq7",
+   "https://github.com/pallets/jinja/commit/90457bbf33b8662926ae65cdde4c4c32e756e403",
+   "https://nvd.nist.gov/vuln/detail/CVE-2025-27516",
+   "https://lists.debian.org/debian-lts-announce/2025/04/msg00045.html",
+   "https://lists.debian.org/debian-lts-announce/2025/04/msg00022.html",
+   "https://github.com/advisories/GHSA-cpwx-vrp4-4pq7"
+  ],
+  "published_at": "2025-03-05T20:40:14Z",
+  "updated_at": "2025-11-03T22:54:42Z",
+  "github_reviewed_at": "2025-03-05T20:40:14Z",
+  "nvd_published_at": "2025-03-05T21:15:20Z",
+  "withdrawn_at": null,
+  "vulnerabilities": [
+   {
+    "package": {
+     "ecosystem": "pip",
+     "name": "Jinja2"
+    },
+    "vulnerable_version_range": "<= 3.1.5",
+    "first_patched_version": "3.1.6",
+    "vulnerable_functions": []
+   }
+  ],
+  "cvss_severities": {
+   "cvss_v3": {
+    "vector_string": null,
+    "score": 0.0
+   },
+   "cvss_v4": {
+    "vector_string": "CVSS:4.0/AV:L/AC:L/AT:P/PR:L/UI:P/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N",
+    "score": 5.4
+   }
+  },
+  "cwes": [
+   {
+    "cwe_id": "CWE-1336",
+    "name": "Improper Neutralization of Special Elements Used in a Template Engine"
+   }
+  ],
+  "credits": [
+   {
+    "user": {
+     "login": "securingapps",
+     "id": 18015061,
+     "node_id": "MDQ6VXNlcjE4MDE1MDYx",
+     "avatar_url": "https://avatars.githubusercontent.com/u/18015061?v=4",
+     "gravatar_id": "",
+     "url": "https://api.github.com/users/securingapps",
+     "html_url": "https://github.com/securingapps",
+     "followers_url": "https://api.github.com/users/securingapps/followers",
+     "following_url": "https://api.github.com/users/securingapps/following{/other_user}",
+     "gists_url": "https://api.github.com/users/securingapps/gists{/gist_id}",
+     "starred_url": "https://api.github.com/users/securingapps/starred{/owner}{/repo}",
+     "subscriptions_url": "https://api.github.com/users/securingapps/subscriptions",
+     "organizations_url": "https://api.github.com/users/securingapps/orgs",
+     "repos_url": "https://api.github.com/users/securingapps/repos",
+     "events_url": "https://api.github.com/users/securingapps/events{/privacy}",
+     "received_events_url": "https://api.github.com/users/securingapps/received_events",
+     "type": "User",
+     "user_view_type": "public",
+     "site_admin": false
+    },
+    "type": "reporter"
+   }
+  ],
+  "comments": 6,
+  "cvss": {
+   "vector_string": null,
+   "score": null
+  },
+  "epss": {
+   "percentage": 0.00507,
+   "percentile": 0.4297
+  }
+ },
+ {
+  "ghsa_id": "GHSA-gmj6-6f8f-6699",
+  "cve_id": "CVE-2024-56201",
+  "url": "https://api.github.com/advisories/GHSA-gmj6-6f8f-6699",
+  "html_url": "https://github.com/advisories/GHSA-gmj6-6f8f-6699",
+  "summary": "Jinja has a sandbox breakout through malicious filenames",
+  "description": "A bug in the Jinja compiler allows an attacker that controls both the content and filename of a template to execute arbitrary Python code, regardless of if Jinja's sandbox is used.\n\nTo exploit the vulnerability, an attacker needs to control both the filename and the contents of a template. Whether that is the case depends on the type of application using Jinja. This vulnerability impacts users of applications which execute untrusted templates where the template author can also choose the template filename.",
+  "type": "reviewed",
+  "severity": "medium",
+  "repository_advisory_url": "https://api.github.com/repos/pallets/jinja/security-advisories/GHSA-gmj6-6f8f-6699",
+  "source_code_location": "https://github.com/pallets/jinja",
+  "identifiers": [
+   {
+    "value": "GHSA-gmj6-6f8f-6699",
+    "type": "GHSA"
+   },
+   {
+    "value": "CVE-2024-56201",
+    "type": "CVE"
+   }
+  ],
+  "references": [
+   "https://github.com/pallets/jinja/security/advisories/GHSA-gmj6-6f8f-6699",
+   "https://github.com/pallets/jinja/releases/tag/3.1.5",
+   "https://nvd.nist.gov/vuln/detail/CVE-2024-56201",
+   "https://github.com/pallets/jinja/issues/1792",
+   "https://github.com/pallets/jinja/commit/767b23617628419ae3709ccfb02f9602ae9fe51f",
+   "https://github.com/advisories/GHSA-gmj6-6f8f-6699"
+  ],
+  "published_at": "2024-12-23T17:54:12Z",
+  "updated_at": "2025-01-08T16:06:02Z",
+  "github_reviewed_at": "2024-12-23T17:54:12Z",
+  "nvd_published_at": "2024-12-23T16:15:07Z",
+  "withdrawn_at": null,
+  "vulnerabilities": [
+   {
+    "package": {
+     "ecosystem": "pip",
+     "name": "jinja2"
+    },
+    "vulnerable_version_range": ">= 3.0.0, <= 3.1.4",
+    "first_patched_version": "3.1.5",
+    "vulnerable_functions": []
+   }
+  ],
+  "cvss_severities": {
+   "cvss_v3": {
+    "vector_string": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H",
+    "score": 8.8
+   },
+   "cvss_v4": {
+    "vector_string": "CVSS:4.0/AV:L/AC:L/AT:P/PR:L/UI:P/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N",
+    "score": 5.4
+   }
+  },
+  "cwes": [
+   {
+    "cwe_id": "CWE-150",
+    "name": "Improper Neutralization of Escape, Meta, or Control Sequences"
+   }
+  ],
+  "credits": [
+   {
+    "user": {
+     "login": "sleiner",
+     "id": 6379313,
+     "node_id": "MDQ6VXNlcjYzNzkzMTM=",
+     "avatar_url": "https://avatars.githubusercontent.com/u/6379313?v=4",
+     "gravatar_id": "",
+     "url": "https://api.github.com/users/sleiner",
+     "html_url": "https://github.com/sleiner",
+     "followers_url": "https://api.github.com/users/sleiner/followers",
+     "following_url": "https://api.github.com/users/sleiner/following{/other_user}",
+     "gists_url": "https://api.github.com/users/sleiner/gists{/gist_id}",
+     "starred_url": "https://api.github.com/users/sleiner/starred{/owner}{/repo}",
+     "subscriptions_url": "https://api.github.com/users/sleiner/subscriptions",
+     "organizations_url": "https://api.github.com/users/sleiner/orgs",
+     "repos_url": "https://api.github.com/users/sleiner/repos",
+     "events_url": "https://api.github.com/users/sleiner/events{/privacy}",
+     "received_events_url": "https://api.github.com/users/sleiner/received_events",
+     "type": "User",
+     "user_view_type": "public",
+     "site_admin": false
+    },
+    "type": "reporter"
+   },
+   {
+    "user": {
+     "login": "sisp",
+     "id": 2206639,
+     "node_id": "MDQ6VXNlcjIyMDY2Mzk=",
+     "avatar_url": "https://avatars.githubusercontent.com/u/2206639?v=4",
+     "gravatar_id": "",
+     "url": "https://api.github.com/users/sisp",
+     "html_url": "https://github.com/sisp",
+     "followers_url": "https://api.github.com/users/sisp/followers",
+     "following_url": "https://api.github.com/users/sisp/following{/other_user}",
+     "gists_url": "https://api.github.com/users/sisp/gists{/gist_id}",
+     "starred_url": "https://api.github.com/users/sisp/starred{/owner}{/repo}",
+     "subscriptions_url": "https://api.github.com/users/sisp/subscriptions",
+     "organizations_url": "https://api.github.com/users/sisp/orgs",
+     "repos_url": "https://api.github.com/users/sisp/repos",
+     "events_url": "https://api.github.com/users/sisp/events{/privacy}",
+     "received_events_url": "https://api.github.com/users/sisp/received_events",
+     "type": "User",
+     "user_view_type": "public",
+     "site_admin": false
+    },
+    "type": "remediation_developer"
+   },
+   {
+    "user": {
+     "login": "frenzymadness",
+     "id": 5688939,
+     "node_id": "MDQ6VXNlcjU2ODg5Mzk=",
+     "avatar_url": "https://avatars.githubusercontent.com/u/5688939?v=4",
+     "gravatar_id": "",
+     "url": "https://api.github.com/users/frenzymadness",
+     "html_url": "https://github.com/frenzymadness",
+     "followers_url": "https://api.github.com/users/frenzymadness/followers",
+     "following_url": "https://api.github.com/users/frenzymadness/following{/other_user}",
+     "gists_url": "https://api.github.com/users/frenzymadness/gists{/gist_id}",
+     "starred_url": "https://api.github.com/users/frenzymadness/starred{/owner}{/repo}",
+     "subscriptions_url": "https://api.github.com/users/frenzymadness/subscriptions",
+     "organizations_url": "https://api.github.com/users/frenzymadness/orgs",
+     "repos_url": "https://api.github.com/users/frenzymadness/repos",
+     "events_url": "https://api.github.com/users/frenzymadness/events{/privacy}",
+     "received_events_url": "https://api.github.com/users/frenzymadness/received_events",
+     "type": "User",
+     "user_view_type": "public",
+     "site_admin": false
+    },
+    "type": "analyst"
+   }
+  ],
+  "comments": 3,
+  "cvss": {
+   "vector_string": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H",
+   "score": 8.8
+  },
+  "epss": {
+   "percentage": 0.00307,
+   "percentile": 0.23536
+  }
+ },
+ {
+  "ghsa_id": "GHSA-h75v-3vvj-5mfj",
+  "cve_id": "CVE-2024-34064",
+  "url": "https://api.github.com/advisories/GHSA-h75v-3vvj-5mfj",
+  "html_url": "https://github.com/advisories/GHSA-h75v-3vvj-5mfj",
+  "summary": "Jinja vulnerable to HTML attribute injection when passing user input as keys to xmlattr filter",
+  "description": "The `xmlattr` filter in affected versions of Jinja accepts keys containing non-attribute characters. XML/HTML attributes cannot contain spaces, `/`, `>`, or `=`, as each would then be interpreted as starting a separate attribute. If an application accepts keys (as opposed to only values) as user input, and renders these in pages that other users see as well, an attacker could use this to inject other attributes and perform XSS. The fix for the previous GHSA-h5c8-rqwp-cp95 CVE-2024-22195 only addressed spaces but not other characters.\n\nAccepting keys as user input is now explicitly considered an unintended use case of the `xmlattr` filter, and code that does so without otherwise validating the input should be flagged as insecure, regardless of Jinja version. Accepting _values_ as user input continues to be safe.",
+  "type": "reviewed",
+  "severity": "medium",
+  "repository_advisory_url": "https://api.github.com/repos/pallets/jinja/security-advisories/GHSA-h75v-3vvj-5mfj",
+  "source_code_location": "https://github.com/pallets/jinja",
+  "identifiers": [
+   {
+    "value": "GHSA-h75v-3vvj-5mfj",
+    "type": "GHSA"
+   },
+   {
+    "value": "CVE-2024-34064",
+    "type": "CVE"
+   }
+  ],
+  "references": [
+   "https://github.com/pallets/jinja/security/advisories/GHSA-h75v-3vvj-5mfj",
+   "https://github.com/pallets/jinja/commit/0668239dc6b44ef38e7a6c9f91f312fd4ca581cb",
+   "https://nvd.nist.gov/vuln/detail/CVE-2024-34064",
+   "https://lists.fedoraproject.org/archives/list/package-announce@lists.fedoraproject.org/message/567XIGSZMABG6TSMYWD7MIYNJSUQQRUC",
+   "https://lists.fedoraproject.org/archives/list/package-announce@lists.fedoraproject.org/message/GCLF44KY43BSVMTE6S53B4V5WP3FRRSE",
+   "https://lists.fedoraproject.org/archives/list/package-announce@lists.fedoraproject.org/message/SSCBHIL6BYKR5NRCBXP4XMP2CEEKGFVS",
+   "https://lists.fedoraproject.org/archives/list/package-announce@lists.fedoraproject.org/message/ZALNWE3TXPPHVPSI3AZ5CTMSTAVN5UMS",
+   "https://lists.debian.org/debian-lts-announce/2024/12/msg00009.html",
+   "https://github.com/advisories/GHSA-h75v-3vvj-5mfj"
+  ],
+  "published_at": "2024-05-06T14:20:59Z",
+  "updated_at": "2025-11-04T16:50:25Z",
+  "github_reviewed_at": "2024-05-06T14:20:59Z",
+  "nvd_published_at": "2024-05-06T15:15:23Z",
+  "withdrawn_at": null,
+  "vulnerabilities": [
+   {
+    "package": {
+     "ecosystem": "pip",
+     "name": "Jinja2"
+    },
+    "vulnerable_version_range": "< 3.1.4",
+    "first_patched_version": "3.1.4",
+    "vulnerable_functions": []
+   }
+  ],
+  "cvss_severities": {
+   "cvss_v3": {
+    "vector_string": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:L/I:L/A:N",
+    "score": 5.4
+   },
+   "cvss_v4": {
+    "vector_string": null,
+    "score": 0.0
+   }
+  },
+  "cwes": [
+   {
+    "cwe_id": "CWE-79",
+    "name": "Improper Neutralization of Input During Web Page Generation"
+   }
+  ],
+  "credits": [
+   {
+    "user": {
+     "login": "Ry0taK",
+     "id": 49341894,
+     "node_id": "MDQ6VXNlcjQ5MzQxODk0",
+     "avatar_url": "https://avatars.githubusercontent.com/u/49341894?v=4",
+     "gravatar_id": "",
+     "url": "https://api.github.com/users/Ry0taK",
+     "html_url": "https://github.com/Ry0taK",
+     "followers_url": "https://api.github.com/users/Ry0taK/followers",
+     "following_url": "https://api.github.com/users/Ry0taK/following{/other_user}",
+     "gists_url": "https://api.github.com/users/Ry0taK/gists{/gist_id}",
+     "starred_url": "https://api.github.com/users/Ry0taK/starred{/owner}{/repo}",
+     "subscriptions_url": "https://api.github.com/users/Ry0taK/subscriptions",
+     "organizations_url": "https://api.github.com/users/Ry0taK/orgs",
+     "repos_url": "https://api.github.com/users/Ry0taK/repos",
+     "events_url": "https://api.github.com/users/Ry0taK/events{/privacy}",
+     "received_events_url": "https://api.github.com/users/Ry0taK/received_events",
+     "type": "User",
+     "user_view_type": "public",
+     "site_admin": false
+    },
+    "type": "reporter"
+   }
+  ],
+  "comments": 5,
+  "cvss": {
+   "vector_string": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:L/I:L/A:N",
+   "score": 5.4
+  },
+  "epss": {
+   "percentage": 0.00979,
+   "percentile": 0.61503
+  }
+ }
+]
