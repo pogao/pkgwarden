@@ -26,9 +26,6 @@ type Options struct {
 	PublicURL string
 	Engine    *policy.Engine
 	HTTP      *proxy.Upstream
-	// Client forwards npm audit POST requests, which Upstream cannot send.
-	// Default http.DefaultClient.
-	Client *http.Client
 }
 
 // Registry serves the npm registry protocol relative to its mount point.
@@ -44,9 +41,6 @@ func New(o Options) *Registry {
 	}
 	if o.Downloads == "" {
 		o.Downloads = "https://api.npmjs.org"
-	}
-	if o.Client == nil {
-		o.Client = http.DefaultClient
 	}
 	o.Registry = strings.TrimSuffix(o.Registry, "/")
 	o.Downloads = strings.TrimSuffix(o.Downloads, "/")
@@ -265,13 +259,7 @@ func (r *Registry) passthrough(w http.ResponseWriter, req *http.Request) {
 }
 
 func (r *Registry) forwardPost(w http.ResponseWriter, req *http.Request) {
-	up, err := http.NewRequestWithContext(req.Context(), http.MethodPost, r.upstreamURL(req), req.Body)
-	if err != nil {
-		proxy.WriteError(w, err)
-		return
-	}
-	up.Header = forwarded(req, "Accept", "Content-Type", "Content-Encoding", "User-Agent")
-	resp, err := r.o.Client.Do(up)
+	resp, err := r.o.HTTP.Post(req.Context(), r.upstreamURL(req), forwarded(req, "Accept", "Content-Type", "Content-Encoding"), req.Body)
 	if err != nil {
 		proxy.WriteError(w, err)
 		return

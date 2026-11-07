@@ -33,7 +33,7 @@ const maxMetadataBytes = 128 << 20
 
 // Upstream fetches from upstream registries. Metadata fetched through Fetch
 // is cached briefly and concurrent identical requests share one round trip.
-// Artifacts go through Open and are never cached.
+// Artifacts go through Open and are never cached, and neither are POSTs.
 type Upstream struct {
 	client    *http.Client
 	userAgent string
@@ -92,7 +92,17 @@ func (u *Upstream) FetchJSON(ctx context.Context, url string, v any) error {
 // Open issues an uncached GET and returns the response whatever its status.
 // The caller closes the body.
 func (u *Upstream) Open(ctx context.Context, url string, header http.Header) (*http.Response, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	return u.send(ctx, http.MethodGet, url, header, nil)
+}
+
+// Post sends body in a POST and returns the response whatever its status.
+// The caller closes the body.
+func (u *Upstream) Post(ctx context.Context, url string, header http.Header, body io.Reader) (*http.Response, error) {
+	return u.send(ctx, http.MethodPost, url, header, body)
+}
+
+func (u *Upstream) send(ctx context.Context, method, url string, header http.Header, body io.Reader) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, method, url, body)
 	if err != nil {
 		return nil, err
 	}

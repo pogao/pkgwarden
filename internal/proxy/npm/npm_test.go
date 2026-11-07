@@ -49,7 +49,8 @@ func fakeRegistry(t *testing.T) *httptest.Server {
 		switch {
 		case r.Method == http.MethodPost:
 			body, _ := io.ReadAll(r.Body)
-			json.NewEncoder(w).Encode(map[string]string{"path": p, "contentType": r.Header.Get("Content-Type"), "body": string(body)})
+			json.NewEncoder(w).Encode(map[string]string{"path": p, "contentType": r.Header.Get("Content-Type"),
+				"userAgent": r.Header.Get("User-Agent"), "body": string(body)})
 		case p == "/-/v1/search":
 			w.Write([]byte(`{"objects":[],"text":"` + r.URL.Query().Get("text") + `"}`))
 		case strings.HasSuffix(p, ".tgz"):
@@ -407,7 +408,7 @@ func TestPassthrough(t *testing.T) {
 		var echo map[string]string
 		json.NewDecoder(resp.Body).Decode(&echo)
 		resp.Body.Close()
-		want := map[string]string{"path": path, "contentType": "application/json", "body": `{"left-pad":["1.0.0"]}`}
+		want := map[string]string{"path": path, "contentType": "application/json", "userAgent": "pkgwarden-test", "body": `{"left-pad":["1.0.0"]}`}
 		if resp.StatusCode != http.StatusOK || !maps.Equal(echo, want) {
 			t.Errorf("POST %s: status %d upstream saw %v", path, resp.StatusCode, echo)
 		}
