@@ -7,9 +7,9 @@ import (
 	"log/slog"
 )
 
-// RequestIDHeader carries the request ID in to the proxy, when a load
+// requestIDHeader carries the request ID in to the proxy, when a load
 // balancer or client sets it, and back out on every response.
-const RequestIDHeader = "X-Request-Id"
+const requestIDHeader = "X-Request-Id"
 
 type requestIDKey struct{}
 

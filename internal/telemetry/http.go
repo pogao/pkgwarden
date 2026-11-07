@@ -18,8 +18,8 @@ import (
 func Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
-		id := requestID(r.Header.Get(RequestIDHeader))
-		w.Header().Set(RequestIDHeader, id)
+		id := requestID(r.Header.Get(requestIDHeader))
+		w.Header().Set(requestIDHeader, id)
 		ctx := WithRequestID(r.Context(), id)
 		rec := &recorder{ResponseWriter: w}
 		next.ServeHTTP(rec, r.WithContext(ctx))

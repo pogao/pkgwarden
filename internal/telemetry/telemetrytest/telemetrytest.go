@@ -73,6 +73,7 @@ func CaptureLogs(t testing.TB) *Logs {
 	return l
 }
 
+// Write takes one log line from the handler that CaptureLogs installs.
 func (l *Logs) Write(p []byte) (int, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
