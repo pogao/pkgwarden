@@ -76,26 +76,34 @@ func (o *OpenSSF) Refresh(ctx context.Context) error {
 	return nil
 }
 
+// openSSFRetry is the first wait after a failed refresh. Each further
+// failure doubles it, up to the refresh interval.
+const openSSFRetry = 30 * time.Second
+
 // Run refreshes the dataset immediately and then every interval until ctx
-// is done, logging failures. A non-positive interval refreshes only once.
+// is done, logging failures. After a failure it retries sooner, with
+// exponential backoff. A non-positive interval refreshes only once.
 func (o *OpenSSF) Run(ctx context.Context, interval time.Duration) {
-	refresh := func() {
-		if err := o.Refresh(ctx); err != nil && ctx.Err() == nil {
-			slog.ErrorContext(ctx, "advisory dataset refresh failed", "source", "openssf", "err", err)
-		}
-	}
-	refresh()
-	if interval <= 0 {
-		return
-	}
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
+	retry := openSSFRetry
 	for {
+		wait := interval
+		if err := o.Refresh(ctx); err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			slog.ErrorContext(ctx, "advisory dataset refresh failed", "source", "openssf", "err", err)
+			wait = min(retry, interval)
+			retry = min(2*retry, interval)
+		} else {
+			retry = openSSFRetry
+		}
+		if interval <= 0 {
+			return
+		}
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
-			refresh()
+		case <-time.After(wait):
 		}
 	}
 }

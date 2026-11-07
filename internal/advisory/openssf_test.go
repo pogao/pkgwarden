@@ -17,9 +17,10 @@ import (
 
 // archive is a fake codeload endpoint whose tarball the test can swap.
 type archive struct {
-	mu     sync.Mutex
-	body   []byte
-	status int
+	mu       sync.Mutex
+	body     []byte
+	status   int
+	requests int
 }
 
 func (a *archive) set(status int, body []byte) {
@@ -31,6 +32,7 @@ func (a *archive) set(status int, body []byte) {
 func (a *archive) RoundTrip(r *http.Request) (*http.Response, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	a.requests++
 	if r.Header.Get("User-Agent") != "pkgwarden" {
 		return &http.Response{StatusCode: http.StatusForbidden, Body: http.NoBody, Request: r}, nil
 	}
@@ -39,6 +41,12 @@ func (a *archive) RoundTrip(r *http.Request) (*http.Response, error) {
 
 func (a *archive) source() *OpenSSF {
 	return NewOpenSSF(&http.Client{Transport: a}, "https://codeload.example/tar.gz/main")
+}
+
+func (a *archive) count() int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.requests
 }
 
 func tarball(t *testing.T, files map[string]string) []byte {
@@ -190,5 +198,62 @@ func TestOpenSSFRun(t *testing.T) {
 
 		cancel()
 		<-done
+	})
+}
+
+func TestOpenSSFRunRetriesWithBackoff(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		a := &archive{}
+		a.set(http.StatusBadGateway, []byte("bad gateway"))
+		src := a.source()
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		go func() {
+			src.Run(ctx, time.Hour)
+			close(done)
+		}()
+		defer func() {
+			cancel()
+			<-done
+		}()
+		synctest.Wait()
+		if n := a.count(); n != 1 {
+			t.Fatalf("%d downloads at start, want 1", n)
+		}
+
+		// next waits gap and checks that exactly one more download happened
+		// at its end and none before.
+		next := func(gap time.Duration) {
+			t.Helper()
+			n := a.count()
+			time.Sleep(gap - time.Second)
+			synctest.Wait()
+			if got := a.count(); got != n {
+				t.Fatalf("download %d came before the %v wait was over", got, gap)
+			}
+			time.Sleep(time.Second)
+			synctest.Wait()
+			if got := a.count(); got != n+1 {
+				t.Fatalf("%d downloads after waiting %v, want %d", got, gap, n+1)
+			}
+		}
+		for _, gap := range []time.Duration{30 * time.Second, time.Minute, 2 * time.Minute, 4 * time.Minute,
+			8 * time.Minute, 16 * time.Minute, 32 * time.Minute, time.Hour, time.Hour} {
+			next(gap)
+		}
+		if _, err := src.Lookup(ctx, ecosystem.Cargo, "rustdecimal"); err == nil {
+			t.Fatal("Lookup succeeded before any download did")
+		}
+
+		a.set(http.StatusOK, tarball(t, datasetFiles(t)))
+		next(time.Hour)
+		if advs, err := src.Lookup(ctx, ecosystem.Cargo, "rustdecimal"); err != nil || len(advs) != 1 {
+			t.Fatalf("after a successful retry: %+v, %v; want the dataset loaded", advs, err)
+		}
+		next(time.Hour)
+
+		a.set(http.StatusBadGateway, []byte("bad gateway"))
+		next(time.Hour)
+		next(30 * time.Second)
 	})
 }
