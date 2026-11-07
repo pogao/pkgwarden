@@ -2,6 +2,9 @@ package policy
 
 import (
 	"context"
+	"fmt"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/pogao/pkgwarden/internal/advisory"
@@ -52,5 +55,100 @@ func New(cfg Config, src advisory.Source) *Engine {
 // Assess returns the verdict for every release of pkg. Failures to reach an
 // advisory source become findings rather than errors.
 func (e *Engine) Assess(ctx context.Context, pkg *Package) *Assessment {
-	panic("TODO")
+	a := &Assessment{releases: make(map[string]Verdict, len(pkg.Releases))}
+	for _, r := range pkg.Releases {
+		a.releases[r.Version] = Verdict{}
+	}
+	if e.allowlisted(pkg) {
+		a.Package.add(Finding{Rule: RuleAllowlist, Decision: Allow, Reason: "package is allowlisted"})
+		return a
+	}
+	e.cooldown(pkg, a)
+	e.knownBad(ctx, pkg, a)
+	if e.cfg.Heuristics.Enabled {
+		e.heuristics(pkg, a)
+	}
+	return a
+}
+
+func (a *Assessment) flag(version string, f Finding) {
+	v := a.releases[version]
+	v.add(f)
+	a.releases[version] = v
+}
+
+func (e *Engine) allowlisted(pkg *Package) bool {
+	name := pkg.Ecosystem.Normalize(pkg.Name)
+	return slices.ContainsFunc(e.cfg.Allow[pkg.Ecosystem], func(s string) bool {
+		return pkg.Ecosystem.Normalize(s) == name
+	})
+}
+
+func (e *Engine) cooldown(pkg *Package, a *Assessment) {
+	if e.cfg.Cooldown <= 0 {
+		return
+	}
+	now := e.now()
+	for _, r := range pkg.Releases {
+		switch age := now.Sub(r.Published); {
+		case r.Published.IsZero():
+			a.flag(r.Version, Finding{Rule: RuleCooldown, Decision: Block, Reason: "publish time unknown, so the cooldown cannot be verified"})
+		case age < e.cfg.Cooldown:
+			a.flag(r.Version, Finding{Rule: RuleCooldown, Decision: Block, Reason: fmt.Sprintf(
+				"published %s ago, inside the %s cooldown", humanDuration(age), humanDuration(e.cfg.Cooldown))})
+		}
+	}
+}
+
+func (e *Engine) knownBad(ctx context.Context, pkg *Package, a *Assessment) {
+	advs, err := e.advisories.Lookup(ctx, pkg.Ecosystem, pkg.Name)
+	if err != nil {
+		d := Block
+		if e.cfg.FailOpen {
+			d = Warn
+		}
+		a.Package.add(Finding{Rule: RuleAdvisoryLookup, Decision: d, Reason: "advisory lookup failed: " + err.Error()})
+	}
+	for _, adv := range advs {
+		f := Finding{Rule: RuleAdvisory, Decision: Block, Reason: describe(adv)}
+		if adv.Kind == advisory.Vulnerability && !e.cfg.BlockVulnerabilities {
+			f.Decision = Warn
+		}
+		if len(adv.Versions) == 0 && len(adv.Ranges) == 0 {
+			a.Package.add(f)
+			continue
+		}
+		for _, r := range pkg.Releases {
+			if adv.Affects(r.Version) {
+				a.flag(r.Version, f)
+			}
+		}
+	}
+}
+
+func describe(adv advisory.Advisory) string {
+	kind := adv.Kind.String()
+	if adv.Severity != "" {
+		kind = strings.ToLower(adv.Severity) + " " + kind
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s (%s, via %s)", adv.ID, kind, adv.Source)
+	if adv.Summary != "" {
+		b.WriteString(": " + adv.Summary)
+	}
+	if adv.URL != "" {
+		b.WriteString(" " + adv.URL)
+	}
+	return b.String()
+}
+
+func humanDuration(d time.Duration) string {
+	if d < 24*time.Hour {
+		return d.Round(time.Minute).String()
+	}
+	days := int(d / (24 * time.Hour))
+	if h := int((d % (24 * time.Hour)) / time.Hour); h > 0 {
+		return fmt.Sprintf("%dd%dh", days, h)
+	}
+	return fmt.Sprintf("%dd", days)
 }
