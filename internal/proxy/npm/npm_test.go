@@ -282,6 +282,25 @@ func TestVersionManifest(t *testing.T) {
 	assertBlocked(t, resp, body, "npm/@acme/widget@1.1.0", "cooldown")
 }
 
+func TestManifestForDroppedTagGivesTargetVerdict(t *testing.T) {
+	e := newEnv(t, week, nil)
+	tests := []struct {
+		path string
+		want []string
+	}{
+		{"/npm/left-pad/next", []string{"npm/left-pad@2.0.0-rc.1", "cooldown"}},
+		{"/npm/@acme/widget/next", []string{"npm/@acme/widget@2.0.0-rc.1", "cooldown"}},
+		{"/npm/left-pad/nightly", []string{"npm/left-pad@nightly", "unknown-release"}},
+		{"/npm/left-pad/9.9.9", []string{"npm/left-pad@9.9.9", "unknown-release"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.path, func(t *testing.T) {
+			resp, body := get(t, e.proxy.URL+tt.path)
+			assertBlocked(t, resp, body, tt.want...)
+		})
+	}
+}
+
 func assertBlocked(t *testing.T, resp *http.Response, body []byte, want ...string) {
 	t.Helper()
 	if resp.StatusCode != http.StatusForbidden {
