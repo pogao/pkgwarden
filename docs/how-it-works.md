@@ -74,7 +74,7 @@ pkgwarden keeps three caches in memory. None survives a restart.
 
 - pkgwarden caches upstream metadata, such as packuments, index files, version lists, and download counts, for `-metadata-ttl` (default 5 minutes). The cache holds at most 512 documents. Concurrent requests for the same document share one upstream round trip.
 - pkgwarden caches advisory lookups per ecosystem and package name for `-advisory-ttl` (default 1 hour). The cache holds at most 10000 packages. A failed lookup is not cached, so the next request tries again.
-- The OpenSSF dataset, when `-openssf` is set, lives in an in-memory index that a background task rebuilds every `-openssf-refresh` (default 6 hours).
+- The OpenSSF dataset, when `-openssf` is set, lives in an in-memory index that a background task rebuilds every `-openssf-refresh` (default 6 hours). After a failed rebuild, the task retries sooner, starting at 30 seconds.
 
 pkgwarden never caches artifacts. It does not cache the assessment either. It recomputes the assessment from the cached inputs on every request, so a release leaves its cooldown the moment it reaches the age, without waiting for a cache to expire.
 
