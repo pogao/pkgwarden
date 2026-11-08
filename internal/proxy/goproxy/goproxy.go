@@ -73,7 +73,8 @@ func (r *Registry) Package(ctx context.Context, name string) (*policy.Package, e
 }
 
 // load describes a module and returns the versions upstream lists. extra
-// adds a version the list may lack: pseudo-versions are never listed.
+// adds a version the list may lack, since pseudo-versions are never listed,
+// unless upstream has no .info for it either.
 func (r *Registry) load(ctx context.Context, mod, extra string) (*policy.Package, []string, error) {
 	esc, err := module.EscapePath(mod)
 	if err != nil {
@@ -130,6 +131,9 @@ func (r *Registry) load(ctx context.Context, mod, extra string) (*policy.Package
 		}
 		if err := g.Wait(); err != nil {
 			return nil, nil, err
+		}
+		if len(versions) > len(listed) && releases[len(listed)].Published.IsZero() {
+			releases = releases[:len(listed)]
 		}
 	}
 
