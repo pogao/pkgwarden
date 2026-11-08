@@ -84,6 +84,8 @@ func (r *Registry) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		r.passthrough(w, req)
 	case !ok:
 		http.NotFound(w, req)
+	case rt.tags:
+		r.serveDistTags(w, req, rt.name)
 	case rt.spec != "":
 		r.serveManifest(w, req, rt)
 	case rt.file == "":
@@ -94,17 +96,25 @@ func (r *Registry) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 }
 
 // route is a request for a packument, a single version manifest (spec set
-// to a version or dist-tag), or a tarball (file set).
+// to a version or dist-tag), a tarball (file set), or the dist-tags (tags
+// set).
 type route struct {
 	name string // scoped names as "@scope/name"
 	spec string
 	file string
+	tags bool
 }
 
 // parseRoute recognizes /<name>, /@scope/<name>, either with a trailing
-// slash, and the version and tarball paths under them. req.URL.Path is
-// already decoded, so @scope%2fname arrives as @scope/name.
+// slash, the version and tarball paths under them, and
+// /-/package/<name>/dist-tags. req.URL.Path is already decoded, so
+// @scope%2fname arrives as @scope/name.
 func parseRoute(p string) (route, bool) {
+	if rest, ok := strings.CutPrefix(p, "/-/package/"); ok {
+		name, isTags := strings.CutSuffix(rest, "/dist-tags")
+		rt, valid := parseRoute("/" + name)
+		return route{name: rt.name, tags: true}, isTags && valid && rt.spec == "" && rt.file == ""
+	}
 	segs := strings.Split(strings.TrimPrefix(p, "/"), "/")
 	n := 1
 	if strings.HasPrefix(segs[0], "@") {
@@ -233,6 +243,23 @@ func (r *Registry) serveManifest(w http.ResponseWriter, req *http.Request, rt ro
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Write(m)
+}
+
+// serveDistTags answers npm dist-tag ls with the filtered packument's tags.
+func (r *Registry) serveDistTags(w http.ResponseWriter, req *http.Request, name string) {
+	body, _, _, ok := r.filtered(w, req, name)
+	if !ok {
+		return
+	}
+	var doc struct {
+		DistTags json.RawMessage `json:"dist-tags"`
+	}
+	if err := json.Unmarshal(body, &doc); err != nil {
+		proxy.WriteError(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(doc.DistTags)
 }
 
 func (r *Registry) serveTarball(w http.ResponseWriter, req *http.Request, rt route) {
