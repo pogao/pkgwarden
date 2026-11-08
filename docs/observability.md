@@ -28,7 +28,7 @@ Every pkgwarden series starts with `pkgwarden_`. No metric has a package name or
 | `pkgwarden_openssf_packages` | gauge | none | Packages in the loaded OpenSSF index. |
 | `pkgwarden_openssf_refresh_failures_total` | counter | none | Failed OpenSSF dataset refreshes. A refresh cut short by shutdown is not counted. |
 | `pkgwarden_policy_info` | gauge | `cooldown`, `block_severity`, `fail_open`, `heuristics`, `heuristics_warn`, `heuristics_block` | Always `1`. The labels hold the policy flags the process started with. |
-| `pkgwarden_build_info` | gauge | `version`, `go_version` | Always `1`. `version` is the `VERSION` build argument for an image built by the `Dockerfile`, or `(devel)` when the build sets none. A binary built by `go build` or `go run` reports the module version from the Go build information, such as `v0.0.0-20261107233310-f009d03e5c9d`. |
+| `pkgwarden_build_info` | gauge | `version`, `go_version` | Always `1`. `version` is the `VERSION` build argument for an image built by the `Dockerfile`, or `(devel)` when the build sets none. A binary built by `go build` in a git checkout reports the module version from the Go build information, such as `v0.0.0-20261107233310-f009d03e5c9d`. `go run` stamps no version control information, so it reports `(devel)`. |
 
 The histograms use these bucket bounds in seconds: 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, and 60.
 
@@ -45,7 +45,7 @@ The histograms use these bucket bounds in seconds: 0.005, 0.01, 0.025, 0.05, 0.1
 | `stage` | `metadata` for a package document: a packument or version manifest, a simple index page, a compact index file, a Go version list or `@latest`, or a sparse index file. `artifact` for a request for one release's file. |
 | `decision` | `allow`, `warn`, or `block`. |
 | `rule` | A rule name from [Rules](api.md#rules), such as `advisory/malicious` or `cooldown`. |
-| `cache` | `metadata` or `advisory`. |
+| `cache` | `metadata`, `advisory`, or `go_info`. |
 | `source` | `osv`, `ghsa`, or `openssf`. |
 | `result` | `hit` or `miss`. |
 
