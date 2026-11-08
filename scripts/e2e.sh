@@ -9,7 +9,9 @@ set -uo pipefail
 
 cd "$(dirname "$0")/.."
 image=pkgwarden:e2e
-net=pkgwarden-e2e
+# Unique names, so cleanup never removes a container or network the user owns.
+net=pkgwarden-e2e-$$
+ctr=pkgwarden-e2e-$$
 url=http://pkgwarden:8080
 host=http://127.0.0.1:18080
 fails=0
@@ -51,8 +53,8 @@ expect_403() {
 client() { docker run --rm --network "$net" "$@"; }
 
 cleanup() {
-	docker logs pkgwarden >e2e-pkgwarden.log 2>&1
-	docker rm -f pkgwarden >/dev/null 2>&1
+	docker logs "$ctr" >e2e-pkgwarden.log 2>&1
+	docker rm -f "$ctr" >/dev/null 2>&1
 	docker network rm "$net" >/dev/null 2>&1
 	rm -rf "$tmp"
 }
@@ -60,9 +62,17 @@ trap cleanup EXIT
 
 version="e2e-$(git describe --tags --always --dirty 2>/dev/null || echo unknown)"
 docker build -q --build-arg VERSION="$version" -t "$image" . >/dev/null || exit 1
-docker network create "$net" >/dev/null
-docker run -d --name pkgwarden --network "$net" -p 127.0.0.1:18080:8080 "$image" -log-level debug >/dev/null
-for _ in $(seq 30); do curl -sf "$host/healthz" >/dev/null && break; sleep 1; done
+docker network create "$net" >/dev/null || exit 1
+docker run -d --name "$ctr" --network "$net" --network-alias pkgwarden -p 127.0.0.1:18080:8080 \
+	"$image" -log-level debug >/dev/null || exit 1
+tries=0
+until curl -sf "$host/healthz" >/dev/null; do
+	if ((++tries == 30)); then
+		echo "pkgwarden did not answer $host/healthz within 30 seconds; proxy log in e2e-pkgwarden.log" >&2
+		exit 1
+	fi
+	sleep 1
+done
 
 echo "== npm"
 expect_ok "npm install express" client node:22-alpine sh -c \
@@ -97,7 +107,7 @@ assert d['files'] and d['files'][0]['url'].startswith('$url/pypi/files/'), d['fi
 expect_ok "pip download requests==2.31.0 (medium only, warns)" client python:3.13-slim \
 	pip download -q --no-deps -d /tmp/d --trusted-host pkgwarden --index-url "$url/pypi/simple/" requests==2.31.0
 expect_ok "check API rates requests 2.31.0 as warn" sh -c \
-	"curl -s '$host/api/v1/check?ecosystem=pypi&name=requests&version=2.31.0' | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d); assert d[\"decision\"] == \"warn\"'"
+	"curl -s '$host/api/v1/check?ecosystem=pypi&name=requests&version=2.31.0' | tee /dev/stderr | grep -E '^  \"decision\": \"warn\",?\$' >/dev/null"
 expect_refused "pip download urllib3==1.24.1 (vulnerable)" "No matching distribution|403" client python:3.13-slim \
 	pip download -q --no-deps -d /tmp/d --trusted-host pkgwarden --index-url "$url/pypi/simple/" urllib3==1.24.1
 expect_403 "pypi file urllib3 1.24.1 names the advisory" \
@@ -186,7 +196,7 @@ echo "== tracing"
 # log_has ID MSG waits briefly for a log line with message MSG and request_id ID.
 log_has() {
 	for _ in 1 2 3 4 5; do
-		docker logs pkgwarden 2>&1 | grep -qF "\"msg\":\"$2\",\"request_id\":\"$1\"" && return 0
+		docker logs "$ctr" 2>&1 | grep -qF "\"msg\":\"$2\",\"request_id\":\"$1\"" && return 0
 		sleep 1
 	done
 	return 1
@@ -196,7 +206,7 @@ code=$(curl -s -o /dev/null -w '%{http_code}' -H "X-Request-Id: $id" "$host/npm/
 if [[ $code == 200 ]] && log_has "$id" request && log_has "$id" upstream; then
 	pass "allowed download $id has request and upstream log lines"
 else
-	fail "allowed download $id: HTTP $code"; docker logs pkgwarden 2>&1 | grep -F "$id" | tail -5
+	fail "allowed download $id: HTTP $code"; docker logs "$ctr" 2>&1 | grep -F "$id" | tail -5
 fi
 body=$(curl -s -D "$tmp/headers" "$host/npm/lodash/-/lodash-4.17.20.tgz")
 id=$(awk -F': ' 'tolower($1) == "x-request-id" { sub(/\r$/, "", $2); print $2 }' "$tmp/headers")
