@@ -12,6 +12,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -56,11 +57,12 @@ func fakeRegistry(t *testing.T) *httptest.Server {
 		case strings.HasSuffix(p, ".tgz"):
 			w.Header().Set("Content-Type", "application/octet-stream")
 			w.Write(tarballBytes(p))
-		case p == "/@acme/widget" || p == "/left-pad":
+		// registry.npmjs.org answers /<name>/ like /<name>.
+		case strings.TrimSuffix(p, "/") == "/@acme/widget" || strings.TrimSuffix(p, "/") == "/left-pad":
 			if r.Header.Get("Accept") != "application/json" {
 				t.Errorf("packument requested with Accept %q, want the full document", r.Header.Get("Accept"))
 			}
-			name := strings.TrimPrefix(p, "/")
+			name := strings.Trim(p, "/")
 			doc := strings.NewReplacer(
 				"__NAME__", name,
 				"__UNSCOPED__", name[strings.LastIndex(name, "/")+1:],
@@ -152,12 +154,19 @@ func TestPackumentHidesBlockedVersions(t *testing.T) {
 		{"/npm/@acme/widget", "@acme/widget"},
 		{"/npm/@acme%2fwidget", "@acme/widget"},
 		{"/npm/@acme%2Fwidget", "@acme/widget"},
+		{"/npm/left-pad/", "left-pad"},
+		{"/npm/left-pad/?write=true", "left-pad"},
+		{"/npm/@acme/widget/", "@acme/widget"},
+		{"/npm/@acme%2fwidget/", "@acme/widget"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.path, func(t *testing.T) {
 			resp, body := get(t, e.proxy.URL+tt.path)
 			if resp.StatusCode != http.StatusOK {
 				t.Fatalf("status %d: %s", resp.StatusCode, body)
+			}
+			if d := resp.Header.Get("X-Pkgwarden-Decision"); d != "allow" {
+				t.Errorf("X-Pkgwarden-Decision = %q, want allow", d)
 			}
 			if h := resp.Header.Get("ETag") + resp.Header.Get("Last-Modified"); h != "" {
 				t.Errorf("upstream validators forwarded for a rewritten body: %q", h)
@@ -428,6 +437,48 @@ func TestPassthrough(t *testing.T) {
 		if resp.StatusCode != http.StatusMethodNotAllowed {
 			t.Errorf("%s %s: status %d, want 405", req.method, req.path, resp.StatusCode)
 		}
+	}
+}
+
+func TestOnlyRegistryEndpointsPassThrough(t *testing.T) {
+	var (
+		mu   sync.Mutex
+		seen []string
+	)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		seen = append(seen, r.URL.Path)
+		mu.Unlock()
+		w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(upstream.Close)
+	engine := policy.New(policy.Config{Cooldown: week}, nil)
+	reg := npm.New(npm.Options{
+		Registry:  upstream.URL,
+		Downloads: upstream.URL,
+		Engine:    engine,
+		HTTP:      proxy.NewUpstream(http.DefaultClient, "pkgwarden-test", time.Minute),
+	})
+	srv := httptest.NewServer(proxy.NewServer(engine, reg))
+	t.Cleanup(srv.Close)
+	upstreamSaw := func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		out := seen
+		seen = nil
+		return out
+	}
+
+	for _, path := range []string{"/npm/left-pad/x/y/z", "/npm/left-pad/-/", "/npm/left-pad/1.0.0/", "/npm/@acme/widget/-/widget-1.0.0.zip", "/npm/"} {
+		resp, body := get(t, srv.URL+path)
+		if saw := upstreamSaw(); resp.StatusCode != http.StatusNotFound || len(saw) != 0 {
+			t.Errorf("%s: status %d body %q, upstream saw %v, want 404 without an upstream request", path, resp.StatusCode, body, saw)
+		}
+	}
+
+	resp, body := get(t, srv.URL+"/npm/-/ping")
+	if saw := upstreamSaw(); resp.StatusCode != http.StatusOK || !slices.Equal(saw, []string{"/-/ping"}) {
+		t.Errorf("/npm/-/ping: status %d body %q, upstream saw %v, want it relayed", resp.StatusCode, body, saw)
 	}
 }
 
