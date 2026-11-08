@@ -99,3 +99,23 @@ func comparePEP440(a, b pep440) int {
 func (p part) compare(q part) int {
 	return cmp.Or(cmp.Compare(p.rank, q.rank), cmp.Compare(p.n, q.n))
 }
+
+// pep440Key spells out every field comparePEP440 reads, so two versions
+// share a key exactly when they compare equal.
+func pep440Key(v pep440) string {
+	b := strconv.AppendUint(nil, v.epoch, 10)
+	b = append(b, '!')
+	for i, n := range v.release {
+		if i > 0 {
+			b = append(b, '.')
+		}
+		b = strconv.AppendUint(b, n, 10)
+	}
+	for _, p := range [...]part{v.pre, v.post, v.dev} {
+		b = append(b, '|')
+		b = strconv.AppendInt(b, int64(p.rank), 10)
+		b = append(b, ':')
+		b = strconv.AppendUint(b, p.n, 10)
+	}
+	return string(b)
+}
