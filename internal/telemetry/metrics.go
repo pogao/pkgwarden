@@ -8,6 +8,7 @@
 package telemetry
 
 import (
+	"cmp"
 	"net/http"
 	"runtime"
 	"runtime/debug"
@@ -21,6 +22,11 @@ import (
 )
 
 var registry = prometheus.NewRegistry()
+
+// version overrides the module version in build_info. Builds without VCS
+// information, such as the container image, set it with
+// -ldflags "-X github.com/pogao/pkgwarden/internal/telemetry.version=v1.2.3".
+var version string
 
 var (
 	metric = promauto.With(registry)
@@ -88,11 +94,11 @@ var (
 
 func init() {
 	registry.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
-	version := "unknown"
-	if bi, ok := debug.ReadBuildInfo(); ok {
-		version = bi.Main.Version
+	v := version
+	if bi, ok := debug.ReadBuildInfo(); ok && v == "" {
+		v = bi.Main.Version
 	}
-	buildInfo.WithLabelValues(version, runtime.Version()).Set(1)
+	buildInfo.WithLabelValues(cmp.Or(v, "unknown"), runtime.Version()).Set(1)
 }
 
 // Handler serves every metric in the Prometheus exposition format.

@@ -58,7 +58,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-docker build -q -t "$image" . >/dev/null || exit 1
+version="e2e-$(git describe --tags --always --dirty 2>/dev/null || echo unknown)"
+docker build -q --build-arg VERSION="$version" -t "$image" . >/dev/null || exit 1
 docker network create "$net" >/dev/null
 docker run -d --name pkgwarden --network "$net" -p 127.0.0.1:18080:8080 "$image" -log-level debug >/dev/null
 for _ in $(seq 30); do curl -sf "$host/healthz" >/dev/null && break; sleep 1; done
@@ -164,6 +165,12 @@ for eco in npm pypi rubygems go cargo; do
 		fail "$eco metrics: $served artifacts served, $blocked blocks, want both positive"
 	fi
 done
+
+if grep -F 'pkgwarden_build_info{' <<<"$metrics" | grep -qF ",version=\"$version\""; then
+	pass "build_info reports version $version"
+else
+	fail "build_info: $(grep -F 'pkgwarden_build_info{' <<<"$metrics"), want version $version"
+fi
 
 echo "== tracing"
 # log_has ID MSG waits briefly for a log line with message MSG and request_id ID.
