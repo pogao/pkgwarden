@@ -18,6 +18,13 @@ type Registry interface {
 	Package(ctx context.Context, name string) (*policy.Package, error)
 }
 
+// packageVersioner is a Registry whose upstream does not list every version
+// it serves, so the check endpoint describes the package together with the
+// version it is asked about.
+type packageVersioner interface {
+	PackageVersion(ctx context.Context, name, version string) (*policy.Package, error)
+}
+
 // NewServer mounts each registry under /<ecosystem>/ and adds /healthz and
 // the /api/v1/check endpoint.
 func NewServer(engine *policy.Engine, regs ...Registry) http.Handler {
@@ -59,7 +66,12 @@ func check(w http.ResponseWriter, r *http.Request, engine *policy.Engine, regs m
 		http.Error(w, "ecosystem not enabled or name missing", http.StatusBadRequest)
 		return
 	}
-	pkg, err := reg.Package(r.Context(), name)
+	var pkg *policy.Package
+	if pv, ok := reg.(packageVersioner); ok {
+		pkg, err = pv.PackageVersion(r.Context(), name, q.Get("version"))
+	} else {
+		pkg, err = reg.Package(r.Context(), name)
+	}
 	if err != nil {
 		WriteError(w, err)
 		return

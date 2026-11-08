@@ -72,6 +72,17 @@ func (r *Registry) Package(ctx context.Context, name string) (*policy.Package, e
 	return pkg, err
 }
 
+// PackageVersion is Package for a question about version. Like a zip
+// request, it adds a version the list leaves out, but only one a zip can
+// name: upstream resolves a query such as v1.6 or master to another version.
+func (r *Registry) PackageVersion(ctx context.Context, name, version string) (*policy.Package, error) {
+	if checkZipVersion(name, version) != nil {
+		version = ""
+	}
+	pkg, _, err := r.load(ctx, name, version)
+	return pkg, err
+}
+
 // load describes a module and returns the versions upstream lists. extra
 // adds a version the list may lack, since pseudo-versions are never listed,
 // unless upstream has no .info for it either.
