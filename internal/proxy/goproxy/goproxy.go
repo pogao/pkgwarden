@@ -10,6 +10,7 @@ package goproxy
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -213,11 +214,22 @@ func parseRoute(p string) (route, error) {
 	// A query such as master.info resolves upstream, but a zip must name a
 	// canonical version so advisories match it.
 	if e == zipFile {
-		if err := module.Check(mod, v); err != nil {
+		if err := checkZipVersion(mod, v); err != nil {
 			return route{}, err
 		}
 	}
 	return route{endpoint: e, module: mod, version: v}, nil
+}
+
+// checkZipVersion reports whether v is a version a zip of mod can name.
+func checkZipVersion(mod, v string) error {
+	if err := module.Check(mod, v); err != nil {
+		return err
+	}
+	if module.CanonicalVersion(v) != v {
+		return &module.ModuleError{Path: mod, Err: &module.InvalidVersionError{Version: v, Err: errors.New("not canonical")}}
+	}
+	return nil
 }
 
 func (r *Registry) ServeHTTP(w http.ResponseWriter, req *http.Request) {
