@@ -8,7 +8,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"path"
 	"strings"
+
+	"golang.org/x/mod/semver"
 
 	"github.com/pogao/pkgwarden/internal/ecosystem"
 	"github.com/pogao/pkgwarden/internal/policy"
@@ -77,8 +80,15 @@ func (r *Registry) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 	rt, ok := parseRoute(req.URL.Path)
 	switch {
-	case !ok:
+	// No package name starts with "-", so /-/ holds the registry's own
+	// endpoints. Upstream answers other paths, such as /<name>/1.0.0/,
+	// with package documents that must not reach the client unfiltered.
+	case !ok && strings.HasPrefix(req.URL.Path, "/-/"):
 		r.passthrough(w, req)
+	case !ok:
+		http.NotFound(w, req)
+	case rt.tags:
+		r.serveDistTags(w, req, rt.name)
 	case rt.spec != "":
 		r.serveManifest(w, req, rt)
 	case rt.file == "":
@@ -89,17 +99,25 @@ func (r *Registry) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 }
 
 // route is a request for a packument, a single version manifest (spec set
-// to a version or dist-tag), or a tarball (file set).
+// to a version or dist-tag), a tarball (file set), or the dist-tags (tags
+// set).
 type route struct {
 	name string // scoped names as "@scope/name"
 	spec string
 	file string
+	tags bool
 }
 
-// parseRoute recognizes /<name>, /@scope/<name>, and the tarball paths
-// under them. req.URL.Path is already decoded, so @scope%2fname arrives as
-// @scope/name.
+// parseRoute recognizes /<name>, /@scope/<name>, either with a trailing
+// slash, the version and tarball paths under them, and
+// /-/package/<name>/dist-tags. req.URL.Path is already decoded, so
+// @scope%2fname arrives as @scope/name.
 func parseRoute(p string) (route, bool) {
+	if rest, ok := strings.CutPrefix(p, "/-/package/"); ok {
+		name, isTags := strings.CutSuffix(rest, "/dist-tags")
+		rt, valid := parseRoute("/" + name)
+		return route{name: rt.name, tags: true}, isTags && valid && rt.spec == "" && rt.file == ""
+	}
 	segs := strings.Split(strings.TrimPrefix(p, "/"), "/")
 	n := 1
 	if strings.HasPrefix(segs[0], "@") {
@@ -115,7 +133,7 @@ func parseRoute(p string) (route, bool) {
 	}
 	name, rest := strings.Join(segs[:n], "/"), segs[n:]
 	switch {
-	case len(rest) == 0:
+	case len(rest) == 0 || len(rest) == 1 && rest[0] == "":
 		return route{name: name}, true
 	case len(rest) == 1 && rest[0] != "" && rest[0] != "-":
 		return route{name: name, spec: rest[0]}, true
@@ -125,10 +143,19 @@ func parseRoute(p string) (route, bool) {
 	return route{}, false
 }
 
-// version extracts the version from a tarball file name such as
-// widget-1.2.3.tgz. A name that does not fit yields a string no release
-// matches, so the policy blocks it as unknown.
-func (rt route) version() string {
+// version returns the version whose dist.tarball has the requested file
+// name. Old npm clients named the file after the unnormalized version, so
+// express-3.0.0rc3.tgz belongs to 3.0.0-rc3. Failing that, it extracts the
+// version from a file name such as widget-1.2.3.tgz. A name that does not
+// fit yields a string no release matches, so the policy blocks it as
+// unknown.
+func (rt route) version(p *packument) string {
+	for v, m := range p.versions {
+		var tarball string
+		if json.Unmarshal(m.dist["tarball"], &tarball) == nil && path.Base(tarball) == rt.file {
+			return v
+		}
+	}
 	unscoped := rt.name[strings.LastIndex(rt.name, "/")+1:]
 	v, _ := strings.CutPrefix(strings.TrimSuffix(rt.file, ".tgz"), unscoped+"-")
 	return v
@@ -190,6 +217,13 @@ func (r *Registry) filtered(w http.ResponseWriter, req *http.Request, name strin
 	}
 	if !ok {
 		latest := p.distTags["latest"]
+		if latest == "" {
+			for v := range p.versions {
+				if latest == "" || semver.Compare("v"+v, "v"+latest) > 0 {
+					latest = v
+				}
+			}
+		}
 		proxy.Enforce(ctx, w, proxy.JSON, proxy.StageMetadata, proxy.Subject{Ecosystem: ecosystem.Npm, Name: name, Version: latest}, a.Release(latest))
 		return nil, nil, nil, false
 	}
@@ -230,14 +264,31 @@ func (r *Registry) serveManifest(w http.ResponseWriter, req *http.Request, rt ro
 	w.Write(m)
 }
 
+// serveDistTags answers npm dist-tag ls with the filtered packument's tags.
+func (r *Registry) serveDistTags(w http.ResponseWriter, req *http.Request, name string) {
+	body, _, _, ok := r.filtered(w, req, name)
+	if !ok {
+		return
+	}
+	var doc struct {
+		DistTags json.RawMessage `json:"dist-tags"`
+	}
+	if err := json.Unmarshal(body, &doc); err != nil {
+		proxy.WriteError(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(doc.DistTags)
+}
+
 func (r *Registry) serveTarball(w http.ResponseWriter, req *http.Request, rt route) {
 	ctx := req.Context()
-	_, pkg, err := r.load(ctx, rt.name)
+	p, pkg, err := r.load(ctx, rt.name)
 	if err != nil {
 		proxy.WriteError(w, err)
 		return
 	}
-	s := proxy.Subject{Ecosystem: ecosystem.Npm, Name: rt.name, Version: rt.version()}
+	s := proxy.Subject{Ecosystem: ecosystem.Npm, Name: rt.name, Version: rt.version(p)}
 	a := r.o.Engine.Assess(ctx, pkg)
 	if !proxy.Enforce(ctx, w, proxy.JSON, proxy.StageArtifact, s, a.Release(s.Version)) {
 		return

@@ -83,6 +83,10 @@ expect_403 "npm tarball lodash@4.17.20 names the advisory" \
 	/npm/lodash/-/lodash-4.17.20.tgz "vulnerability|GHSA"
 expect_403 "npm unpublished malicious event-stream@3.3.6 is refused" \
 	/npm/event-stream/-/event-stream-3.3.6.tgz "event-stream@3.3.6"
+expect_ok "npm /lodash/ with a trailing slash hides lodash@4.17.20" sh -c \
+	"curl -sf '$host/npm/lodash/' >'$tmp/lodash.json' && ! grep -qF '\"4.17.20\"' '$tmp/lodash.json'"
+expect_ok "npm tarball express-3.0.0rc3.tgz downloads as express@3.0.0-rc3" \
+	curl -sSf -o /dev/null "$host/npm/express/-/express-3.0.0rc3.tgz"
 expect_ok "npm hides @types/node releases younger than 7 days" client node:22-alpine node -e "
 	const week = 7 * 24 * 3600e3;
 	const get = u => fetch(u, {headers: {accept: 'application/json'}}).then(r => r.json());

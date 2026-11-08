@@ -12,6 +12,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -37,6 +38,19 @@ const npmTime = "2006-01-02T15:04:05.000Z07:00"
 
 func tarballBytes(path string) []byte { return []byte("\x1f\x8b\x08\x00 tarball " + path) }
 
+// legacyPackument has a release that an old npm client published as
+// 1.0.0rc1. The registry lists it as 1.0.0-rc1, but its tarball keeps the
+// original name. The packument has no latest tag.
+const legacyPackument = `{
+  "name": "x",
+  "dist-tags": {"next": "1.1.0"},
+  "versions": {
+    "1.0.0-rc1": {"name": "x", "version": "1.0.0-rc1", "dist": {"tarball": "__REGISTRY__/x/-/x-1.0.0rc1.tgz"}},
+    "1.1.0": {"name": "x", "version": "1.1.0", "dist": {"tarball": "__REGISTRY__/x/-/x-1.1.0.tgz"}}
+  },
+  "time": {"created": "__OLD__", "1.0.0-rc1": "__OLD__", "1.1.0": "__YOUNG__"}
+}`
+
 func fakeRegistry(t *testing.T) *httptest.Server {
 	t.Helper()
 	tmpl, err := os.ReadFile("testdata/packument.json")
@@ -56,11 +70,12 @@ func fakeRegistry(t *testing.T) *httptest.Server {
 		case strings.HasSuffix(p, ".tgz"):
 			w.Header().Set("Content-Type", "application/octet-stream")
 			w.Write(tarballBytes(p))
-		case p == "/@acme/widget" || p == "/left-pad":
+		// registry.npmjs.org answers /<name>/ like /<name>.
+		case strings.TrimSuffix(p, "/") == "/@acme/widget" || strings.TrimSuffix(p, "/") == "/left-pad":
 			if r.Header.Get("Accept") != "application/json" {
 				t.Errorf("packument requested with Accept %q, want the full document", r.Header.Get("Accept"))
 			}
-			name := strings.TrimPrefix(p, "/")
+			name := strings.Trim(p, "/")
 			doc := strings.NewReplacer(
 				"__NAME__", name,
 				"__UNSCOPED__", name[strings.LastIndex(name, "/")+1:],
@@ -71,6 +86,8 @@ func fakeRegistry(t *testing.T) *httptest.Server {
 			w.Header().Set("ETag", `W/"upstream"`)
 			w.Header().Set("Last-Modified", "Mon, 02 Nov 2026 10:00:00 GMT")
 			w.Write([]byte(doc))
+		case p == "/x":
+			w.Write([]byte(strings.NewReplacer("__REGISTRY__", srv.URL, "__OLD__", old.Format(npmTime), "__YOUNG__", young.Format(npmTime)).Replace(legacyPackument)))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 			w.Write([]byte(`{"error":"Not found"}`))
@@ -152,12 +169,19 @@ func TestPackumentHidesBlockedVersions(t *testing.T) {
 		{"/npm/@acme/widget", "@acme/widget"},
 		{"/npm/@acme%2fwidget", "@acme/widget"},
 		{"/npm/@acme%2Fwidget", "@acme/widget"},
+		{"/npm/left-pad/", "left-pad"},
+		{"/npm/left-pad/?write=true", "left-pad"},
+		{"/npm/@acme/widget/", "@acme/widget"},
+		{"/npm/@acme%2fwidget/", "@acme/widget"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.path, func(t *testing.T) {
 			resp, body := get(t, e.proxy.URL+tt.path)
 			if resp.StatusCode != http.StatusOK {
 				t.Fatalf("status %d: %s", resp.StatusCode, body)
+			}
+			if d := resp.Header.Get("X-Pkgwarden-Decision"); d != "allow" {
+				t.Errorf("X-Pkgwarden-Decision = %q, want allow", d)
 			}
 			if h := resp.Header.Get("ETag") + resp.Header.Get("Last-Modified"); h != "" {
 				t.Errorf("upstream validators forwarded for a rewritten body: %q", h)
@@ -262,6 +286,27 @@ func TestTarball(t *testing.T) {
 	}
 }
 
+func TestTarballNamedAfterUnnormalizedVersion(t *testing.T) {
+	e := newEnv(t, week, nil)
+	_, body := get(t, e.proxy.URL+"/npm/x")
+	var doc packumentView
+	if err := json.Unmarshal(body, &doc); err != nil {
+		t.Fatal(err)
+	}
+	tarball := doc.Versions["1.0.0-rc1"].Dist.Tarball
+	if want := e.proxy.URL + "/npm/x/-/x-1.0.0rc1.tgz"; tarball != want {
+		t.Fatalf("1.0.0-rc1 tarball = %q, want %q", tarball, want)
+	}
+	resp, got := get(t, tarball)
+	if want := tarballBytes("/x/-/x-1.0.0rc1.tgz"); resp.StatusCode != http.StatusOK || !bytes.Equal(got, want) {
+		t.Errorf("1.0.0-rc1 tarball: status %d body %q, want 200 %q", resp.StatusCode, got, want)
+	}
+	resp, body = get(t, e.proxy.URL+"/npm/x/-/x-1.1.0.tgz")
+	assertBlocked(t, resp, body, "npm/x@1.1.0", "cooldown")
+	resp, body = get(t, e.proxy.URL+"/npm/x/-/x-9.9.9.tgz")
+	assertBlocked(t, resp, body, "npm/x@9.9.9", "unknown-release")
+}
+
 func TestVersionManifest(t *testing.T) {
 	e := newEnv(t, week, nil)
 	for _, path := range []string{"/npm/@acme/widget/1.0.0", "/npm/@acme%2fwidget/latest"} {
@@ -302,6 +347,22 @@ func TestManifestForDroppedTagGivesTargetVerdict(t *testing.T) {
 	}
 }
 
+func TestDistTagsComeFromFilteredPackument(t *testing.T) {
+	e := newEnv(t, week, nil)
+	for _, path := range []string{"/npm/-/package/left-pad/dist-tags", "/npm/-/package/@acme%2fwidget/dist-tags", "/npm/-/package/@acme/widget/dist-tags"} {
+		resp, body := get(t, e.proxy.URL+path)
+		var tags map[string]string
+		if err := json.Unmarshal(body, &tags); err != nil || resp.StatusCode != http.StatusOK {
+			t.Errorf("%s: status %d body %s", path, resp.StatusCode, body)
+			continue
+		}
+		want := map[string]string{"latest": "1.0.0", "legacy": "0.9.0", "v3": "3.0.0"}
+		if d := resp.Header.Get("X-Pkgwarden-Decision"); !maps.Equal(tags, want) || d != "allow" {
+			t.Errorf("%s: tags %v decision %q, want %v allow", path, tags, d, want)
+		}
+	}
+}
+
 func assertBlocked(t *testing.T, resp *http.Response, body []byte, want ...string) {
 	t.Helper()
 	if resp.StatusCode != http.StatusForbidden {
@@ -324,7 +385,7 @@ func TestPackageWideAdvisoryBlocks(t *testing.T) {
 	e := newEnv(t, week, fakeSource{"@acme/widget": {{
 		ID: "MAL-2026-0001", Source: "openssf", Kind: advisory.Malicious, Summary: "Malicious code in @acme/widget",
 	}}})
-	for _, path := range []string{"/npm/@acme%2fwidget", "/npm/@acme/widget/-/widget-1.0.0.tgz"} {
+	for _, path := range []string{"/npm/@acme%2fwidget", "/npm/@acme/widget/-/widget-1.0.0.tgz", "/npm/-/package/@acme%2fwidget/dist-tags"} {
 		resp, body := get(t, e.proxy.URL+path)
 		assertBlocked(t, resp, body, "MAL-2026-0001")
 	}
@@ -337,6 +398,12 @@ func TestNothingAllowedBlocksWithLatestReasons(t *testing.T) {
 	e := newEnv(t, 365*24*time.Hour, nil)
 	resp, body := get(t, e.proxy.URL+"/npm/@acme/widget")
 	assertBlocked(t, resp, body, "npm/@acme/widget@1.1.0", "cooldown")
+}
+
+func TestNothingAllowedWithoutLatestBlocksWithNewestReasons(t *testing.T) {
+	e := newEnv(t, 365*24*time.Hour, nil)
+	resp, body := get(t, e.proxy.URL+"/npm/x")
+	assertBlocked(t, resp, body, "npm/x@1.1.0", "cooldown")
 }
 
 func TestPackage(t *testing.T) {
@@ -428,6 +495,48 @@ func TestPassthrough(t *testing.T) {
 		if resp.StatusCode != http.StatusMethodNotAllowed {
 			t.Errorf("%s %s: status %d, want 405", req.method, req.path, resp.StatusCode)
 		}
+	}
+}
+
+func TestOnlyRegistryEndpointsPassThrough(t *testing.T) {
+	var (
+		mu   sync.Mutex
+		seen []string
+	)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		seen = append(seen, r.URL.Path)
+		mu.Unlock()
+		w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(upstream.Close)
+	engine := policy.New(policy.Config{Cooldown: week}, nil)
+	reg := npm.New(npm.Options{
+		Registry:  upstream.URL,
+		Downloads: upstream.URL,
+		Engine:    engine,
+		HTTP:      proxy.NewUpstream(http.DefaultClient, "pkgwarden-test", time.Minute),
+	})
+	srv := httptest.NewServer(proxy.NewServer(engine, reg))
+	t.Cleanup(srv.Close)
+	upstreamSaw := func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		out := seen
+		seen = nil
+		return out
+	}
+
+	for _, path := range []string{"/npm/left-pad/x/y/z", "/npm/left-pad/-/", "/npm/left-pad/1.0.0/", "/npm/@acme/widget/-/widget-1.0.0.zip", "/npm/"} {
+		resp, body := get(t, srv.URL+path)
+		if saw := upstreamSaw(); resp.StatusCode != http.StatusNotFound || len(saw) != 0 {
+			t.Errorf("%s: status %d body %q, upstream saw %v, want 404 without an upstream request", path, resp.StatusCode, body, saw)
+		}
+	}
+
+	resp, body := get(t, srv.URL+"/npm/-/ping")
+	if saw := upstreamSaw(); resp.StatusCode != http.StatusOK || !slices.Equal(saw, []string{"/-/ping"}) {
+		t.Errorf("/npm/-/ping: status %d body %q, upstream saw %v, want it relayed", resp.StatusCode, body, saw)
 	}
 }
 
