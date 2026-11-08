@@ -3,6 +3,8 @@ package policy
 import (
 	"context"
 	"errors"
+	"fmt"
+	"math/rand/v2"
 	"slices"
 	"strings"
 	"testing"
@@ -189,6 +191,52 @@ func TestAdvisoryLookupFailure(t *testing.T) {
 		assertMentions(t, assertDecision(t, a, "1.0.0", Warn), "advisory lookup failed")
 		assertMentions(t, assertDecision(t, a, "2.0.0", Block), "MAL-2026-4")
 	})
+}
+
+// BenchmarkAssessDjangoSized matches advisories at the scale OSV reports for
+// django: 448 releases, and 320 advisories that enumerate about 18,000
+// affected versions and carry about 590 ranges.
+func BenchmarkAssessDjangoSized(b *testing.B) {
+	var releases []Release
+	for major := 1; major <= 4; major++ {
+		for minor := range 16 {
+			for _, suffix := range []string{"a1", "b1", "rc1", "", ".1", ".2", ".3"} {
+				releases = append(releases, Release{Version: fmt.Sprintf("%d.%d%s", major, minor, suffix), Published: daysAgo(400)})
+			}
+		}
+	}
+	rng := rand.New(rand.NewPCG(1, 1))
+	var advs []advisory.Advisory
+	for i := range 320 {
+		n := 20 + rng.IntN(75)
+		start := rng.IntN(len(releases) - n)
+		adv := advisory.Advisory{
+			ID: fmt.Sprintf("PYSEC-%d", i), Source: "osv", Severity: advisory.SeverityHigh, Ecosystem: ecosystem.PyPI,
+			Ranges: []advisory.Range{{Introduced: "0", Fixed: releases[start+n].Version}},
+		}
+		for _, r := range releases[start : start+n] {
+			adv.Versions = append(adv.Versions, r.Version)
+		}
+		if rng.IntN(100) < 85 {
+			adv.Ranges = append(adv.Ranges, advisory.Range{Introduced: releases[start].Version, LastAffected: releases[start+n-1].Version})
+		}
+		advs = append(advs, adv)
+	}
+	e := newTestEngine(Config{BlockSeverity: advisory.SeverityHigh}, fakeSource{advs: advs})
+	pkg := &Package{Ecosystem: ecosystem.PyPI, Name: "django", Releases: releases}
+
+	a := e.Assess(context.Background(), pkg)
+	findings := 0
+	for _, r := range releases {
+		findings += len(a.Release(r.Version).Findings)
+	}
+	if findings == 0 {
+		b.Fatal("no release matched an advisory")
+	}
+	for b.Loop() {
+		e.Assess(context.Background(), pkg)
+	}
+	b.ReportMetric(float64(findings), "findings/op")
 }
 
 func TestAllowlistBypassesEveryCheck(t *testing.T) {
