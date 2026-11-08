@@ -15,6 +15,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -86,15 +87,18 @@ func fakeRubyGems(t *testing.T, gems map[string]fakeGem) *httptest.Server {
 		w.Header().Set("Digest", `sha-256="dXBzdHJlYW0="`)
 		w.Write(g.info)
 	})
-	mux.HandleFunc("GET /gems/{file}", func(w http.ResponseWriter, r *http.Request) {
+	artifact := func(w http.ResponseWriter, r *http.Request) {
 		w.Write(artifactBytes(r.PathValue("file")))
-	})
-	mux.HandleFunc("GET /quick/Marshal.4.8/{file}", func(w http.ResponseWriter, r *http.Request) {
-		w.Write(artifactBytes(r.PathValue("file")))
-	})
+	}
+	mux.HandleFunc("GET /gems/{file}", artifact)
+	mux.HandleFunc("GET /downloads/{file}", artifact)
+	mux.HandleFunc("GET /quick/Marshal.4.8/{file}", artifact)
 	mux.HandleFunc("GET /versions", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("ETag", `"versions-etag"`)
 		http.ServeContent(w, r, "versions", time.Time{}, bytes.NewReader(versionsFile))
+	})
+	mux.HandleFunc("GET /names", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("---\nnokogiri\n"))
 	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
@@ -252,6 +256,8 @@ func TestArtifactEnforcement(t *testing.T) {
 		{"/gems/nokogiri-1.15.0-x86_64-linux.gem", http.StatusOK, string(artifactBytes("nokogiri-1.15.0-x86_64-linux.gem"))},
 		{"/gems/nokogiri-1.16.0.gem", http.StatusForbidden, "pkgwarden blocked rubygems/nokogiri@1.16.0: cooldown: published 2d ago, inside the 7d cooldown\n"},
 		{"/gems/nokogiri-1.16.0-x86_64-linux.gem", http.StatusForbidden, "pkgwarden blocked rubygems/nokogiri@1.16.0: cooldown: published 2d ago, inside the 7d cooldown\n"},
+		{"/downloads/nokogiri-1.15.0.gem", http.StatusOK, string(artifactBytes("nokogiri-1.15.0.gem"))},
+		{"/downloads/nokogiri-1.16.0.gem", http.StatusForbidden, "pkgwarden blocked rubygems/nokogiri@1.16.0: cooldown: published 2d ago, inside the 7d cooldown\n"},
 		{"/quick/Marshal.4.8/nokogiri-1.15.0.gemspec.rz", http.StatusOK, string(artifactBytes("nokogiri-1.15.0.gemspec.rz"))},
 		{"/quick/Marshal.4.8/nokogiri-1.16.0.gemspec.rz", http.StatusForbidden, "pkgwarden blocked rubygems/nokogiri@1.16.0: cooldown: published 2d ago, inside the 7d cooldown\n"},
 		{"/gems/nokogiri-9.9.9.gem", http.StatusNotFound, "not found\n"},
@@ -274,6 +280,62 @@ func TestArtifactEnforcement(t *testing.T) {
 				t.Errorf("status %d body %q, want %d %q", resp.status, resp.body, tt.wantStatus, tt.wantBody)
 			}
 		})
+	}
+}
+
+func TestHeadOnGemDownloads(t *testing.T) {
+	srv := newProxy(t, map[string]fakeGem{"nokogiri": nokogiri(t)}, nil)
+	for _, dir := range []string{"/gems/", "/downloads/"} {
+		blocked := get(t, "HEAD", srv.URL+"/rubygems"+dir+"nokogiri-1.16.0.gem", nil)
+		if d := blocked.header.Get("X-Pkgwarden-Decision"); blocked.status != http.StatusForbidden || d != "block" {
+			t.Errorf("HEAD %s of a release in cooldown: status %d decision %q, want 403 block", dir, blocked.status, d)
+		}
+		if allowed := get(t, "HEAD", srv.URL+"/rubygems"+dir+"nokogiri-1.15.0.gem", nil); allowed.status != http.StatusOK {
+			t.Errorf("HEAD %s of an allowed release: status %d, want 200", dir, allowed.status)
+		}
+	}
+}
+
+func TestUnroutedPathsUnderFilteredPrefixes(t *testing.T) {
+	upstream, err := url.Parse(fakeRubyGems(t, map[string]fakeGem{"nokogiri": nokogiri(t)}).URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var hits atomic.Int64
+	relay := httputil.NewSingleHostReverseProxy(upstream)
+	front := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		relay.ServeHTTP(w, r)
+	}))
+	t.Cleanup(front.Close)
+	engine := policy.New(policy.Config{Cooldown: 7 * day}, nil)
+	reg := rubygems.New(rubygems.Options{
+		Upstream: front.URL,
+		Engine:   engine,
+		HTTP:     proxy.NewUpstream(front.Client(), "pkgwarden-test", time.Minute),
+	})
+	srv := httptest.NewServer(proxy.NewServer(engine, reg))
+	t.Cleanup(srv.Close)
+
+	for _, path := range []string{
+		"/info/nokogiri/",
+		"/info/nokogiri/x",
+		"/gems/nokogiri-1.15.0.gem/",
+		"/downloads/nokogiri-1.15.0.gem/",
+		"/quick/Marshal.4.8/nokogiri-1.15.0.gemspec.rz/",
+	} {
+		before := hits.Load()
+		resp := get(t, "GET", srv.URL+"/rubygems"+path, nil)
+		if n := hits.Load() - before; resp.status != http.StatusNotFound || n != 0 {
+			t.Errorf("%s: status %d after %d upstream requests, want 404 after none", path, resp.status, n)
+		}
+	}
+	for _, path := range []string{"/versions", "/names"} {
+		before := hits.Load()
+		resp := get(t, "GET", srv.URL+"/rubygems"+path, nil)
+		if n := hits.Load() - before; resp.status != http.StatusOK || n != 1 {
+			t.Errorf("%s: status %d after %d upstream requests, want 200 relayed in one", path, resp.status, n)
+		}
 	}
 }
 
