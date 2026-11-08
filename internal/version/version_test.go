@@ -1,6 +1,9 @@
 package version
 
 import (
+	"math/rand/v2"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/pogao/pkgwarden/internal/ecosystem"
@@ -108,4 +111,79 @@ func TestCompareUnparseable(t *testing.T) {
 			t.Errorf("%s: two unparseable versions: Compare(zzz, aaa) = %d, want 1", eco, got)
 		}
 	}
+}
+
+func TestKeyMatchesCompare(t *testing.T) {
+	semverCorpus := append(product(
+		[]string{"", "v", "=", " "},
+		[]string{"1", "1.2", "1.2.0", "1.10.0", "01.2.0", "0.0.0"},
+		[]string{"", "-rc.1", "-alpha", "-alpha.1", "-0", "-01", "-x.7.z.92"},
+		[]string{"", "+b.5", "+incompatible", "+"},
+	), "v0.0.0-20190101000000-abcdefabcdef", "v1.0.1-0.20200101000000-abcdefabcdef", "1.0.0.0", "master")
+	corpora := map[ecosystem.Ecosystem][]string{
+		ecosystem.Npm:   semverCorpus,
+		ecosystem.Cargo: semverCorpus,
+		ecosystem.Go:    semverCorpus,
+		ecosystem.PyPI: append(product(
+			[]string{"", "v", "0!", "1!"},
+			[]string{"1", "1.0", "1.0.0", "1.2"},
+			[]string{"", "a1", "alpha1", "rc1", "c1", "-preview"},
+			[]string{"", ".post1", "-1", "post"},
+			[]string{"", ".dev0", "dev"},
+			[]string{"", "+l.1"},
+		), "1.0-foo", "1.99999999999999999999999", "1.0RC1", "1.0.post"),
+		ecosystem.RubyGems: append(product(
+			[]string{"0", "1", "01", "1.0", "1.0.0"},
+			[]string{"", ".a", ".a9", ".0.a", ".b1", ".rc1", ".pre", "-beta", "-beta.1", "a", ".1", ".10"},
+			[]string{"", ".0", ".1"},
+		), "", "1..0", "junk!", "1.0.A"),
+	}
+	tokens := []string{"0", "1", "01", "10", ".", "-", "_", "+", "!", "=", " ", "v", "a", "b", "c", "rc", "alpha", "pre", "post", "dev", "r", "x"}
+	rng := rand.New(rand.NewPCG(1, 1))
+	var junk []string
+	for range 300 {
+		var b strings.Builder
+		for range 1 + rng.IntN(6) {
+			b.WriteString(tokens[rng.IntN(len(tokens))])
+		}
+		junk = append(junk, b.String())
+	}
+
+	for eco, corpus := range corpora {
+		corpus = slices.Concat(corpus, junk)
+		vs := make([]Version, len(corpus))
+		for i, s := range corpus {
+			vs[i] = Parse(eco, s)
+		}
+		equalSpellings := 0
+		for i := range vs {
+			for j := i + 1; j < len(vs); j++ {
+				equal := vs[i].Compare(vs[j]) == 0
+				if sameKey := vs[i].Key() == vs[j].Key(); sameKey != equal {
+					t.Fatalf("%s: %q vs %q: same key is %t, but Compare == 0 is %t", eco, corpus[i], corpus[j], sameKey, equal)
+				}
+				if equal && corpus[i] != corpus[j] {
+					equalSpellings++
+				}
+			}
+		}
+		if equalSpellings == 0 {
+			t.Errorf("%s: no two spellings compare equal, so only one direction was tested", eco)
+		}
+	}
+}
+
+// product returns every concatenation of one string from each part, in order.
+func product(parts ...[]string) []string {
+	out := []string{""}
+	for _, part := range parts {
+		var next []string
+		for _, prefix := range out {
+			for _, s := range part {
+				next = append(next, prefix+s)
+			}
+		}
+		out = next
+	}
+	return out
 }

@@ -54,6 +54,23 @@ func parseGem(s string) ([]gemSeg, bool) {
 	return append(trimZeros(segs[:textAt:textAt]), trimZeros(segs[textAt:])...), true
 }
 
+// gemKey joins the canonical segments. parseGem leaves no trailing zero for
+// compareGem to pad, so equal keys mean equal versions.
+func gemKey(segs []gemSeg) string {
+	var b []byte
+	for i, s := range segs {
+		if i > 0 {
+			b = append(b, '.')
+		}
+		if s.isText {
+			b = append(b, s.text...)
+		} else {
+			b = strconv.AppendUint(b, s.n, 10)
+		}
+	}
+	return string(b)
+}
+
 func trimZeros(segs []gemSeg) []gemSeg {
 	for len(segs) > 0 && !segs[len(segs)-1].isText && segs[len(segs)-1].n == 0 {
 		segs = segs[:len(segs)-1]

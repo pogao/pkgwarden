@@ -9,6 +9,7 @@ import (
 
 	"github.com/pogao/pkgwarden/internal/advisory"
 	"github.com/pogao/pkgwarden/internal/ecosystem"
+	"github.com/pogao/pkgwarden/internal/version"
 )
 
 // Config tunes the engine. The zero value disables every check.
@@ -110,6 +111,8 @@ func (e *Engine) knownBad(ctx context.Context, pkg *Package, a *Assessment) {
 		}
 		a.Package.add(Finding{Rule: RuleAdvisoryLookup, Decision: d, Reason: "advisory lookup failed: " + err.Error()})
 	}
+	// Keyed by ecosystem because each advisory orders versions by its own.
+	parsed := make(map[ecosystem.Ecosystem][]version.Version)
 	for _, adv := range advs {
 		f := Finding{Rule: RuleVulnerability, Decision: Warn, Reason: describe(adv)}
 		switch {
@@ -122,8 +125,17 @@ func (e *Engine) knownBad(ctx context.Context, pkg *Package, a *Assessment) {
 			a.Package.add(f)
 			continue
 		}
-		for _, r := range pkg.Releases {
-			if adv.Affects(r.Version) {
+		releases, ok := parsed[adv.Ecosystem]
+		if !ok {
+			releases = make([]version.Version, len(pkg.Releases))
+			for i, r := range pkg.Releases {
+				releases[i] = version.Parse(adv.Ecosystem, r.Version)
+			}
+			parsed[adv.Ecosystem] = releases
+		}
+		m := adv.Matcher()
+		for i, r := range pkg.Releases {
+			if m.Affects(releases[i]) {
 				a.flag(r.Version, f)
 			}
 		}
