@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -19,6 +20,7 @@ import (
 	"github.com/pogao/pkgwarden/internal/ecosystem"
 	"github.com/pogao/pkgwarden/internal/policy"
 	"github.com/pogao/pkgwarden/internal/proxy"
+	"github.com/pogao/pkgwarden/internal/proxy/proxytest"
 	"github.com/pogao/pkgwarden/internal/telemetry/telemetrytest"
 )
 
@@ -227,6 +229,55 @@ func TestDownloads(t *testing.T) {
 				t.Errorf("body %q lacks %q", resp.body, tc.bodyHas)
 			}
 		})
+	}
+}
+
+func TestHeadOnACrateSkipsTheDownload(t *testing.T) {
+	file := proxytest.NewFile()
+	dl := httptest.NewServer(file)
+	t.Cleanup(dl.Close)
+	reg, _, _ := setup(t, nil, func(o *Options) { o.Download = dl.URL })
+	// The registry counts a file after its last byte has gone out, so the
+	// metrics are read once srv.Close has waited for every handler.
+	srv := httptest.NewServer(reg)
+	t.Cleanup(srv.Close)
+	labels := map[string]string{"ecosystem": "cargo"}
+	served := telemetrytest.Value(t, "pkgwarden_artifacts_served_total", labels)
+	sent := telemetrytest.Value(t, "pkgwarden_artifact_bytes_total", labels)
+	head := func(path string) *http.Response {
+		t.Helper()
+		resp, err := http.Head(srv.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp
+	}
+
+	allowed := head("/api/v1/crates/demo_crate/0.2.0/download")
+	if cl := allowed.Header.Get("Content-Length"); allowed.StatusCode != http.StatusOK || cl != strconv.Itoa(file.Size) {
+		t.Errorf("HEAD: status %d Content-Length %q, want 200 and %d", allowed.StatusCode, cl, file.Size)
+	}
+	if n := file.Written(t); n >= file.Size/2 {
+		t.Errorf("upstream sent %d of %d bytes for a HEAD, want the transfer cut short", n, file.Size)
+	}
+	if blocked := head("/api/v1/crates/demo_crate/0.3.0/download"); blocked.StatusCode != http.StatusForbidden {
+		t.Errorf("HEAD on a version inside the cooldown: status %d, want 403", blocked.StatusCode)
+	}
+	resp := get(t, srv.URL+"/api/v1/crates/demo_crate/0.2.0/download")
+	if resp.status != http.StatusOK || len(resp.body) != file.Size {
+		t.Errorf("GET: status %d with %d bytes, want 200 with %d", resp.status, len(resp.body), file.Size)
+	}
+	if n := file.Written(t); n != file.Size {
+		t.Errorf("upstream sent %d of %d bytes for a GET", n, file.Size)
+	}
+	srv.Close()
+
+	if d := telemetrytest.Value(t, "pkgwarden_artifacts_served_total", labels) - served; d != 1 {
+		t.Errorf("artifacts_served_total grew by %v over a HEAD and a GET, want 1", d)
+	}
+	if d := telemetrytest.Value(t, "pkgwarden_artifact_bytes_total", labels) - sent; d != float64(file.Size) {
+		t.Errorf("artifact_bytes_total grew by %.0f over a HEAD and a GET, want %d", d, file.Size)
 	}
 }
 

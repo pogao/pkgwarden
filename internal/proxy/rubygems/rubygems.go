@@ -258,7 +258,7 @@ func (r *Registry) serveArtifact(suffix string, packageFile bool) http.HandlerFu
 		if !proxy.Enforce(ctx, w, proxy.Text, proxy.StageArtifact, s, v) {
 			return
 		}
-		if !packageFile || req.Method == http.MethodHead {
+		if !packageFile {
 			r.relay(w, req, target)
 			return
 		}
@@ -268,7 +268,7 @@ func (r *Registry) serveArtifact(suffix string, packageFile bool) http.HandlerFu
 			return
 		}
 		defer resp.Body.Close()
-		proxy.ServeArtifact(ctx, w, s, resp)
+		proxy.ServeArtifact(w, req, s, resp)
 	}
 }
 
@@ -327,10 +327,7 @@ func (r *Registry) relay(w http.ResponseWriter, req *http.Request, target string
 		return
 	}
 	defer resp.Body.Close()
-	if req.Method == http.MethodHead {
-		resp.Body = http.NoBody
-	}
-	proxy.Relay(w, resp)
+	proxy.Relay(w, req, resp)
 }
 
 // open issues the upstream GET for target, carrying the client's query and

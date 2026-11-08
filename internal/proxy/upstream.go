@@ -148,33 +148,40 @@ var relayHeaders = []string{
 	"ETag", "Last-Modified", "Cache-Control", "Repr-Digest", "Digest",
 }
 
-// Relay copies an upstream response to w.
-func Relay(w http.ResponseWriter, resp *http.Response) {
-	relay(w, resp)
+// Relay copies an upstream response to w, without the body when req is a
+// HEAD request.
+func Relay(w http.ResponseWriter, req *http.Request, resp *http.Response) {
+	relay(w, req, resp)
 }
 
 // ServeArtifact relays an upstream response carrying a release's file and,
-// when upstream answered 200 or 206, counts the file and the bytes copied
-// in the artifact metrics.
-func ServeArtifact(ctx context.Context, w http.ResponseWriter, s Subject, resp *http.Response) {
-	n, err := relay(w, resp)
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
+// when upstream answered 200 or 206 to a request that is not a HEAD, counts
+// the file and the bytes copied in the artifact metrics.
+func ServeArtifact(w http.ResponseWriter, req *http.Request, s Subject, resp *http.Response) {
+	n, err := relay(w, req, resp)
+	if req.Method == http.MethodHead || resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
 		return
 	}
 	telemetry.RecordArtifact(string(s.Ecosystem), n)
 	if err != nil {
-		slog.WarnContext(ctx, "artifact relay interrupted", "ecosystem", string(s.Ecosystem), "package", s.Name,
+		slog.WarnContext(req.Context(), "artifact relay interrupted", "ecosystem", string(s.Ecosystem), "package", s.Name,
 			"version", s.Version, "bytes", n, "err", err)
 	}
 }
 
-func relay(w http.ResponseWriter, resp *http.Response) (int64, error) {
+func relay(w http.ResponseWriter, req *http.Request, resp *http.Response) (int64, error) {
 	for _, h := range relayHeaders {
 		if v := resp.Header.Get(h); v != "" {
 			w.Header().Set(h, v)
 		}
 	}
 	w.WriteHeader(resp.StatusCode)
+	// net/http discards a HEAD response body, so copying it would download
+	// the whole file for nothing. The caller closes the unread body, which
+	// ends the upstream transfer.
+	if req.Method == http.MethodHead {
+		return 0, nil
+	}
 	return io.Copy(w, resp.Body)
 }
 

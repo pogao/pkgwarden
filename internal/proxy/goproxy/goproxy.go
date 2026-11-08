@@ -374,7 +374,7 @@ func (r *Registry) serveZip(w http.ResponseWriter, req *http.Request, rt route, 
 		return
 	}
 	defer resp.Body.Close()
-	proxy.ServeArtifact(ctx, w, s, resp)
+	proxy.ServeArtifact(w, req, s, resp)
 }
 
 func (r *Registry) passthrough(w http.ResponseWriter, req *http.Request, p string) {
@@ -384,5 +384,5 @@ func (r *Registry) passthrough(w http.ResponseWriter, req *http.Request, p strin
 		return
 	}
 	defer resp.Body.Close()
-	proxy.Relay(w, resp)
+	proxy.Relay(w, req, resp)
 }

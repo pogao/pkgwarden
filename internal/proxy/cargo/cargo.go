@@ -223,7 +223,7 @@ func (r *Registry) download(w http.ResponseWriter, req *http.Request) {
 	defer resp.Body.Close()
 	switch resp.StatusCode {
 	case http.StatusOK:
-		proxy.ServeArtifact(ctx, w, s, resp)
+		proxy.ServeArtifact(w, req, s, resp)
 	// static.crates.io is an object store that answers 403 for a missing key.
 	case http.StatusNotFound, http.StatusGone, http.StatusForbidden:
 		proxy.WriteError(w, fmt.Errorf("GET %s: %w", src, proxy.ErrNotFound))
