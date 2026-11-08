@@ -9,7 +9,9 @@ package goproxy
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"path"
 	"slices"
@@ -20,9 +22,11 @@ import (
 	"golang.org/x/mod/semver"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/pogao/pkgwarden/internal/cache"
 	"github.com/pogao/pkgwarden/internal/ecosystem"
 	"github.com/pogao/pkgwarden/internal/policy"
 	"github.com/pogao/pkgwarden/internal/proxy"
+	"github.com/pogao/pkgwarden/internal/telemetry"
 )
 
 // Options configures a Registry.
@@ -36,6 +40,10 @@ type Options struct {
 // Registry serves the GOPROXY protocol relative to its mount point.
 type Registry struct {
 	o Options
+	// times holds publish times by module@version. A canonical version's
+	// .info never changes, and a module can list thousands of versions,
+	// more than the shared metadata cache holds.
+	times *cache.TTL[string, time.Time]
 }
 
 // New returns a Registry, filling in defaults for empty Options fields.
@@ -44,7 +52,7 @@ func New(o Options) *Registry {
 		o.Upstream = "https://proxy.golang.org"
 	}
 	o.Upstream = strings.TrimSuffix(o.Upstream, "/")
-	return &Registry{o: o}
+	return &Registry{o: o, times: cache.New[string, time.Time](24*time.Hour, 100_000)}
 }
 
 // Ecosystem returns ecosystem.Go.
@@ -96,16 +104,26 @@ func (r *Registry) load(ctx context.Context, mod, extra string) (*policy.Package
 		g, gctx := errgroup.WithContext(ctx)
 		g.SetLimit(8)
 		for i, v := range versions {
+			releases[i].Version = v
+			t, ok := r.times.Get(mod + "@" + v)
+			telemetry.RecordCache("go_info", ok)
+			if ok {
+				releases[i].Published = t
+				continue
+			}
 			g.Go(func() error {
 				ev, err := module.EscapeVersion(v)
 				if err != nil {
 					return fmt.Errorf("%s/@v/list: %w", base, err)
 				}
-				var in info
-				if err := r.o.HTTP.FetchJSON(gctx, base+"/@v/"+ev+".info", &in); err != nil {
+				t, err := r.publishTime(gctx, base+"/@v/"+ev+".info")
+				if err != nil {
 					return err
 				}
-				releases[i] = policy.Release{Version: v, Published: in.Time}
+				if !t.IsZero() {
+					r.times.Set(mod+"@"+v, t)
+				}
+				releases[i].Published = t
 				return nil
 			})
 		}
@@ -121,6 +139,29 @@ func (r *Registry) load(ctx context.Context, mod, extra string) (*policy.Package
 		}
 	}
 	return pkg, listed, nil
+}
+
+// publishTime reads the Time of a .info file. It returns the zero time
+// when upstream has no such file: proxy.golang.org lists some versions
+// whose .info answers 404, and the cooldown blocks an unknown publish time.
+func (r *Registry) publishTime(ctx context.Context, url string) (time.Time, error) {
+	resp, err := r.o.HTTP.Open(ctx, url, http.Header{"Accept": {"application/json"}})
+	if err != nil {
+		return time.Time{}, err
+	}
+	defer resp.Body.Close()
+	switch resp.StatusCode {
+	case http.StatusOK:
+	case http.StatusNotFound, http.StatusGone:
+		return time.Time{}, nil
+	default:
+		return time.Time{}, &proxy.StatusError{URL: url, Status: resp.StatusCode}
+	}
+	var in info
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&in); err != nil {
+		return time.Time{}, fmt.Errorf("decode %s: %w", url, err)
+	}
+	return in.Time, nil
 }
 
 type endpoint int
