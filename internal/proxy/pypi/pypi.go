@@ -20,10 +20,6 @@ import (
 	"github.com/pogao/pkgwarden/internal/proxy"
 )
 
-// statsTimeout bounds the download-count lookup, which only feeds
-// heuristics and must not stall an install when pypistats is slow.
-const statsTimeout = 5 * time.Second
-
 // Options configures a Registry. Engine and HTTP are required.
 type Options struct {
 	// PyPI is the base URL of the index serving /pypi/<project>/json and
@@ -75,11 +71,21 @@ func (r *Registry) Ecosystem() ecosystem.Ecosystem { return ecosystem.PyPI }
 // Package implements proxy.Registry. PyPI records no publisher per release,
 // so every Release has nil Publishers.
 func (r *Registry) Package(ctx context.Context, name string) (*policy.Package, error) {
+	_, pkg, err := r.load(ctx, name)
+	return pkg, err
+}
+
+// load fetches the project and its download count side by side and
+// describes the project for the policy engine.
+func (r *Registry) load(ctx context.Context, name string) (*project, *policy.Package, error) {
+	name = ecosystem.PyPI.Normalize(name)
+	downloads := make(chan int64, 1)
+	go func() { downloads <- r.weeklyDownloads(ctx, name) }()
 	p, err := r.project(ctx, name)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return r.describe(ctx, p), nil
+	return p, p.describe(<-downloads), nil
 }
 
 // project is a PyPI project as the JSON API reports it.
@@ -119,8 +125,8 @@ func (m *metadataHash) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
+// project fetches the JSON API document of the normalized name.
 func (r *Registry) project(ctx context.Context, name string) (*project, error) {
-	name = ecosystem.PyPI.Normalize(name)
 	var doc struct {
 		Releases map[string][]file `json:"releases"`
 	}
@@ -137,8 +143,8 @@ func (r *Registry) project(ctx context.Context, name string) (*project, error) {
 }
 
 // describe translates p for the policy engine. Releases come out oldest first.
-func (r *Registry) describe(ctx context.Context, p *project) *policy.Package {
-	pkg := &policy.Package{Ecosystem: ecosystem.PyPI, Name: p.name, WeeklyDownloads: r.weeklyDownloads(ctx, p.name)}
+func (p *project) describe(weeklyDownloads int64) *policy.Package {
+	pkg := &policy.Package{Ecosystem: ecosystem.PyPI, Name: p.name, WeeklyDownloads: weeklyDownloads}
 	for v, fs := range p.releases {
 		rel := policy.Release{Version: v}
 		for _, f := range fs {
@@ -158,7 +164,7 @@ func (r *Registry) describe(ctx context.Context, p *project) *policy.Package {
 }
 
 func (r *Registry) weeklyDownloads(ctx context.Context, name string) int64 {
-	ctx, cancel := context.WithTimeout(ctx, statsTimeout)
+	ctx, cancel := context.WithTimeout(ctx, proxy.DownloadsTimeout)
 	defer cancel()
 	var doc struct {
 		Data struct {
@@ -188,12 +194,11 @@ func (r *Registry) simple(w http.ResponseWriter, req *http.Request) {
 		http.Redirect(w, req, r.base(req)+"/pypi/simple/"+url.PathEscape(name)+"/", http.StatusMovedPermanently)
 		return
 	}
-	p, err := r.project(ctx, name)
+	p, pkg, err := r.load(ctx, name)
 	if err != nil {
 		proxy.WriteError(w, err)
 		return
 	}
-	pkg := r.describe(ctx, p)
 	a := r.o.Engine.Assess(ctx, pkg)
 	if !proxy.Enforce(ctx, w, proxy.Text, proxy.StageMetadata, proxy.Subject{Ecosystem: ecosystem.PyPI, Name: name}, a.Package) {
 		return
@@ -225,13 +230,13 @@ func (r *Registry) simple(w http.ResponseWriter, req *http.Request) {
 func (r *Registry) file(w http.ResponseWriter, req *http.Request) {
 	ctx := req.Context()
 	version, filename := req.PathValue("version"), req.PathValue("filename")
-	p, err := r.project(ctx, req.PathValue("project"))
+	p, pkg, err := r.load(ctx, req.PathValue("project"))
 	if err != nil {
 		proxy.WriteError(w, err)
 		return
 	}
 	s := proxy.Subject{Ecosystem: ecosystem.PyPI, Name: p.name, Version: version}
-	a := r.o.Engine.Assess(ctx, r.describe(ctx, p))
+	a := r.o.Engine.Assess(ctx, pkg)
 	if !proxy.Enforce(ctx, w, proxy.Text, proxy.StageArtifact, s, a.Release(version)) {
 		return
 	}

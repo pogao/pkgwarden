@@ -36,6 +36,11 @@ const maxMetadataBytes = 128 << 20
 // fetchTimeout bounds a shared metadata fetch, body included.
 const fetchTimeout = 2 * time.Minute
 
+// DownloadsTimeout bounds a download-count lookup, which only feeds
+// heuristics and must not stall an install when the stats API is slow. A
+// lookup that runs out of time counts as policy.UnknownDownloads.
+const DownloadsTimeout = 5 * time.Second
+
 // Upstream fetches from upstream registries. Metadata fetched through Fetch
 // is cached briefly and concurrent identical requests share one round trip.
 // Artifacts go through Open and are never cached, and neither are POSTs.

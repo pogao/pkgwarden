@@ -430,3 +430,33 @@ func TestPassthrough(t *testing.T) {
 		}
 	}
 }
+
+func TestPackageWhenDownloadCountsHang(t *testing.T) {
+	release := make(chan struct{})
+	hung := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	t.Cleanup(hung.Close)
+	t.Cleanup(func() { close(release) })
+	reg := npm.New(npm.Options{
+		Registry:  fakeRegistry(t).URL,
+		Downloads: hung.URL,
+		Engine:    policy.New(policy.Config{Cooldown: week}, nil),
+		HTTP:      proxy.NewUpstream(http.DefaultClient, "pkgwarden-test", time.Minute),
+	})
+
+	start := time.Now()
+	pkg, err := reg.Package(context.Background(), "@acme/widget")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(start); elapsed > 10*time.Second {
+		t.Errorf("Package took %v, want the download lookup cut short", elapsed)
+	}
+	if pkg.WeeklyDownloads != policy.UnknownDownloads || len(pkg.Releases) == 0 {
+		t.Errorf("downloads %d with %d releases, want UnknownDownloads and the packument's releases", pkg.WeeklyDownloads, len(pkg.Releases))
+	}
+}

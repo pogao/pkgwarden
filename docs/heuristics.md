@@ -46,8 +46,7 @@ Some of these inputs need a closer look:
 - npm falls back to the packument's current `maintainers` list for a version without `_npmUser`.
 - crates.io's `recent_downloads` counts 90 days, and 13 weeks is about 90 days.
 - The RubyGems figure is an average over the gem's whole life, not a recent count.
-- pkgwarden waits at most 5 seconds for pypistats. If pypistats fails or is slow, the PyPI download count is unknown and `low-downloads` does not fire. pkgwarden logs `pypi download count unavailable` at debug level.
-- If the npm downloads API fails, the npm count is unknown too.
+- pkgwarden waits at most 5 seconds for a download count from the npm downloads API, pypistats, or the RubyGems gem API. If the lookup fails or is slow, the count is unknown and `low-downloads` does not fire. For PyPI, pkgwarden logs `pypi download count unavailable` at debug level.
 
 ## How the score turns into a decision
 
