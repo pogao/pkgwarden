@@ -77,8 +77,13 @@ func (r *Registry) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 	rt, ok := parseRoute(req.URL.Path)
 	switch {
-	case !ok:
+	// No package name starts with "-", so /-/ holds the registry's own
+	// endpoints. Upstream answers other paths, such as /<name>/1.0.0/,
+	// with package documents that must not reach the client unfiltered.
+	case !ok && strings.HasPrefix(req.URL.Path, "/-/"):
 		r.passthrough(w, req)
+	case !ok:
+		http.NotFound(w, req)
 	case rt.spec != "":
 		r.serveManifest(w, req, rt)
 	case rt.file == "":
@@ -96,9 +101,9 @@ type route struct {
 	file string
 }
 
-// parseRoute recognizes /<name>, /@scope/<name>, and the tarball paths
-// under them. req.URL.Path is already decoded, so @scope%2fname arrives as
-// @scope/name.
+// parseRoute recognizes /<name>, /@scope/<name>, either with a trailing
+// slash, and the version and tarball paths under them. req.URL.Path is
+// already decoded, so @scope%2fname arrives as @scope/name.
 func parseRoute(p string) (route, bool) {
 	segs := strings.Split(strings.TrimPrefix(p, "/"), "/")
 	n := 1
@@ -115,7 +120,7 @@ func parseRoute(p string) (route, bool) {
 	}
 	name, rest := strings.Join(segs[:n], "/"), segs[n:]
 	switch {
-	case len(rest) == 0:
+	case len(rest) == 0 || len(rest) == 1 && rest[0] == "":
 		return route{name: name}, true
 	case len(rest) == 1 && rest[0] != "" && rest[0] != "-":
 		return route{name: name, spec: rest[0]}, true
