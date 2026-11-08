@@ -199,7 +199,7 @@ The go command checks downloads against the checksum database at `sum.golang.org
 - The version list at `/go/<module>/@v/list` loses blocked versions. `proxy.golang.org` lists some versions whose `.info` file answers 404. Their publish time is unknown, so the cooldown blocks them and the rest of the list is served.
 - `/go/<module>/@latest` answers with the newest allowed release, or the newest allowed prerelease when no release is allowed.
 - `.info` and `.mod` files pass through for every version, because minimal version selection reads the `go.mod` of versions it will not select.
-- A `.zip` download is checked against its version. The version must be canonical. A pseudo-version gets assessed even though no list includes it.
+- A `.zip` download is checked against its version. The version must be canonical, so `v1.6.zip` gets a 400 and never reaches upstream. A pseudo-version gets assessed even though no list includes it. A version that no list includes and that has no `.info` file gets an `unknown-release` block.
 
 ### What you see when a release is blocked
 

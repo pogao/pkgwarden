@@ -10,6 +10,7 @@ package goproxy
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -71,8 +72,20 @@ func (r *Registry) Package(ctx context.Context, name string) (*policy.Package, e
 	return pkg, err
 }
 
+// PackageVersion is Package for a question about version. Like a zip
+// request, it adds a version the list leaves out, but only one a zip can
+// name: upstream resolves a query such as v1.6 or master to another version.
+func (r *Registry) PackageVersion(ctx context.Context, name, version string) (*policy.Package, error) {
+	if checkZipVersion(name, version) != nil {
+		version = ""
+	}
+	pkg, _, err := r.load(ctx, name, version)
+	return pkg, err
+}
+
 // load describes a module and returns the versions upstream lists. extra
-// adds a version the list may lack: pseudo-versions are never listed.
+// adds a version the list may lack, since pseudo-versions are never listed,
+// unless upstream has no .info for it either.
 func (r *Registry) load(ctx context.Context, mod, extra string) (*policy.Package, []string, error) {
 	esc, err := module.EscapePath(mod)
 	if err != nil {
@@ -129,6 +142,9 @@ func (r *Registry) load(ctx context.Context, mod, extra string) (*policy.Package
 		}
 		if err := g.Wait(); err != nil {
 			return nil, nil, err
+		}
+		if len(versions) > len(listed) && releases[len(listed)].Published.IsZero() {
+			releases = releases[:len(listed)]
 		}
 	}
 
@@ -213,11 +229,22 @@ func parseRoute(p string) (route, error) {
 	// A query such as master.info resolves upstream, but a zip must name a
 	// canonical version so advisories match it.
 	if e == zipFile {
-		if err := module.Check(mod, v); err != nil {
+		if err := checkZipVersion(mod, v); err != nil {
 			return route{}, err
 		}
 	}
 	return route{endpoint: e, module: mod, version: v}, nil
+}
+
+// checkZipVersion reports whether v is a version a zip of mod can name.
+func checkZipVersion(mod, v string) error {
+	if err := module.Check(mod, v); err != nil {
+		return err
+	}
+	if module.CanonicalVersion(v) != v {
+		return &module.ModuleError{Path: mod, Err: &module.InvalidVersionError{Version: v, Err: errors.New("not canonical")}}
+	}
+	return nil
 }
 
 func (r *Registry) ServeHTTP(w http.ResponseWriter, req *http.Request) {

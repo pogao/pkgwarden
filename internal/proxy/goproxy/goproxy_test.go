@@ -2,15 +2,20 @@ package goproxy_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"golang.org/x/mod/module"
 
 	"github.com/pogao/pkgwarden/internal/advisory"
 	"github.com/pogao/pkgwarden/internal/ecosystem"
@@ -33,9 +38,10 @@ var (
 )
 
 const (
-	fooBar   = "example.com/Foo/bar"
-	pseudoV  = "v0.0.0-20261001000000-abcdefabcdef"
-	pseudoV2 = "v0.0.0-20261105000000-123456123456"
+	fooBar             = "example.com/Foo/bar"
+	pseudoV            = "v0.0.0-20261001000000-abcdefabcdef"
+	pseudoV2           = "v0.0.0-20261105000000-123456123456"
+	unpublishedPseudoV = "v0.0.0-20261106000000-000000000000"
 )
 
 type fakeModule struct {
@@ -61,6 +67,7 @@ var modules = map[string]fakeModule{
 		listed: []string{"v0.9.0", "v1.0.0-RC.1", "v1.0.0", "v1.1.0", "v1.2.0-rc.1"},
 		times: map[string]time.Time{
 			"v0.9.0": ancient, "v1.0.0-RC.1": old, "v1.0.0": old, "v1.1.0": young, "v1.2.0-rc.1": young, pseudoV: old,
+			pseudoV2: young, "v2.0.0+incompatible": old,
 		},
 		latest: "v1.2.0-rc.1",
 	},
@@ -91,10 +98,11 @@ func infoJSON(v string, t time.Time) string {
 
 func zipBytes(path string) []byte { return []byte("PK\x03\x04 module zip " + path) }
 
-func fakeProxy(t *testing.T, infoHits *atomic.Int64) *httptest.Server {
+func fakeProxy(t *testing.T, requests, infoHits *atomic.Int64) *httptest.Server {
 	t.Helper()
 	versionEscapes := strings.NewReplacer("!r!c", "RC")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
 		p := strings.TrimPrefix(r.URL.Path, "/")
 		if strings.HasPrefix(p, "sumdb/") {
 			fmt.Fprintf(w, "sumdb %s", p)
@@ -131,6 +139,10 @@ func fakeProxy(t *testing.T, infoHits *atomic.Int64) *httptest.Server {
 			return
 		}
 		v := versionEscapes.Replace(file[:dot])
+		// Like proxy.golang.org, resolve a query such as v1.0 for .info only.
+		if c := module.CanonicalVersion(v); c != "" && file[dot:] == ".info" {
+			v = c
+		}
 		tm, ok := m.times[v]
 		if !ok {
 			notFound()
@@ -162,21 +174,22 @@ func fakeProxy(t *testing.T, infoHits *atomic.Int64) *httptest.Server {
 type env struct {
 	proxy    *httptest.Server
 	reg      *goproxy.Registry
+	requests *atomic.Int64
 	infoHits *atomic.Int64
 }
 
 func newEnv(t *testing.T, src fakeSource) env {
 	t.Helper()
 	engine := policy.New(policy.Config{Cooldown: 7 * 24 * time.Hour}, src)
-	infoHits := new(atomic.Int64)
+	requests, infoHits := new(atomic.Int64), new(atomic.Int64)
 	reg := goproxy.New(goproxy.Options{
-		Upstream: fakeProxy(t, infoHits).URL,
+		Upstream: fakeProxy(t, requests, infoHits).URL,
 		Engine:   engine,
 		HTTP:     proxy.NewUpstream(http.DefaultClient, "pkgwarden-test", time.Minute),
 	})
 	srv := httptest.NewServer(proxy.NewServer(engine, reg))
 	t.Cleanup(srv.Close)
-	return env{proxy: srv, reg: reg, infoHits: infoHits}
+	return env{proxy: srv, reg: reg, requests: requests, infoHits: infoHits}
 }
 
 func get(t *testing.T, url string) (int, string) {
@@ -246,6 +259,7 @@ func TestZip(t *testing.T) {
 		"example.com/!foo/bar/@v/v1.0.0.zip",
 		"example.com/!foo/bar/@v/v1.0.0-!r!c.1.zip",
 		"example.com/!foo/bar/@v/" + pseudoV + ".zip",
+		"example.com/!foo/bar/@v/v2.0.0+incompatible.zip",
 		"example.com/pseudo/old/@v/" + pseudoV + ".zip",
 	}
 	for _, p := range allowed {
@@ -266,10 +280,20 @@ func TestZip(t *testing.T) {
 		"example.com/!foo/bar/@v/master.zip",
 		"example.com/Foo/bar/@v/v1.0.0.zip",
 		"example.com/!foo/bar/@v/v1.0.0-RC.1.zip",
+		"example.com/!foo/bar/@v/v1.0.zip",
+		"example.com/!foo/bar/@v/v1.zip",
 	} {
+		before := e.requests.Load()
 		if status, body := get(t, e.proxy.URL+"/go/"+p); status != http.StatusBadRequest {
 			t.Errorf("%s: status %d body %q, want 400", p, status, body)
 		}
+		if n := e.requests.Load() - before; n != 0 {
+			t.Errorf("%s: sent %d upstream requests, want 0", p, n)
+		}
+	}
+
+	if status, body := get(t, e.proxy.URL+"/go/example.com/!foo/bar/@v/v1.0.info"); status != http.StatusOK || body != infoJSON("v1.0.0", old) {
+		t.Errorf("v1.0.info: status %d body %q, want the upstream .info of v1.0.0", status, body)
 	}
 }
 
@@ -284,6 +308,72 @@ func TestMissingInfoIsAnUnknownPublishTime(t *testing.T) {
 	}
 	if status, body := get(t, e.proxy.URL+"/go/example.com/gap/@v/v1.0.0.zip"); status != http.StatusOK {
 		t.Errorf("v1.0.0.zip: status %d body %q, want 200", status, body)
+	}
+}
+
+func TestUnlistedVersionWithoutInfoIsUnknown(t *testing.T) {
+	e := newEnv(t, nil)
+	for _, v := range []string{"v1.3.0", unpublishedPseudoV} {
+		status, body := get(t, e.proxy.URL+"/go/example.com/gap/@v/"+v+".zip")
+		assertBlocked(t, status, body, "go/example.com/gap@"+v, "unknown-release", "not published upstream")
+	}
+}
+
+func checkAPI(t *testing.T, e env, name, version string) (decision string, rules []string) {
+	t.Helper()
+	q := url.Values{"ecosystem": {"go"}, "name": {name}, "version": {version}}
+	status, body := get(t, e.proxy.URL+"/api/v1/check?"+q.Encode())
+	if status != http.StatusOK {
+		t.Fatalf("check %s@%s: status %d body %q", name, version, status, body)
+	}
+	var res struct {
+		Decision string
+		Findings []struct{ Rule string }
+	}
+	if err := json.Unmarshal([]byte(body), &res); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range res.Findings {
+		rules = append(rules, f.Rule)
+	}
+	return res.Decision, rules
+}
+
+func TestCheckAgreesWithZip(t *testing.T) {
+	e := newEnv(t, nil)
+	tests := []struct {
+		module, version, decision string
+		rules                     []string
+	}{
+		{fooBar, pseudoV, "allow", nil},
+		{fooBar, pseudoV2, "block", []string{"cooldown"}},
+		{fooBar, unpublishedPseudoV, "block", []string{"unknown-release"}},
+		{fooBar, "v1.9.9", "block", []string{"unknown-release"}},
+		{"example.com/gap", "v1.1.0", "block", []string{"cooldown"}},
+	}
+	for _, tt := range tests {
+		esc, err := module.EscapePath(tt.module)
+		if err != nil {
+			t.Fatal(err)
+		}
+		status, body := get(t, e.proxy.URL+"/go/"+esc+"/@v/"+tt.version+".zip")
+		if tt.decision == "allow" && status != http.StatusOK {
+			t.Errorf("%s@%s zip: status %d body %q, want 200", tt.module, tt.version, status, body)
+		}
+		if tt.decision == "block" {
+			assertBlocked(t, status, body, tt.rules...)
+		}
+		if d, rules := checkAPI(t, e, tt.module, tt.version); d != tt.decision || !slices.Equal(rules, tt.rules) {
+			t.Errorf("%s@%s check: %s %v, want %s %v", tt.module, tt.version, d, rules, tt.decision, tt.rules)
+		}
+	}
+
+	// The zip of a non-canonical version is a 400, and upstream would
+	// resolve its .info as a query.
+	for _, v := range []string{"v1.0", "master"} {
+		if d, rules := checkAPI(t, e, fooBar, v); d != "block" || !slices.Equal(rules, []string{"unknown-release"}) {
+			t.Errorf("%s check: %s %v, want block [unknown-release]", v, d, rules)
+		}
 	}
 }
 
