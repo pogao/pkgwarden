@@ -11,8 +11,10 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
     go build -trimpath -ldflags="-s -w -X github.com/pogao/pkgwarden/internal/telemetry.version=${VERSION}" -o /out/pkgwarden ./cmd/pkgwarden
 
-FROM gcr.io/distroless/static-debian12:nonroot
+FROM scratch
+COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=build /out/pkgwarden /pkgwarden
 EXPOSE 8080
-USER nonroot:nonroot
+# A numeric user lets Kubernetes runAsNonRoot verify that it is not root.
+USER 65532:65532
 ENTRYPOINT ["/pkgwarden"]
