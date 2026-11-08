@@ -84,6 +84,9 @@ func (v Version) Compare(w Version) int {
 // them equal, so it can stand in for the version in a map.
 func (v Version) Key() string { return v.key }
 
+// OK reports whether the ecosystem's rules could parse the version.
+func (v Version) OK() bool { return v.ok }
+
 // parseSemver accepts SemVer 2.0 with or without a leading "v" (npm also
 // tolerates "="). Go module versions, pseudo-versions included, are SemVer
 // with a mandatory "v", but advisory databases often record them without it.

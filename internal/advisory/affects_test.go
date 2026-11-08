@@ -140,7 +140,7 @@ func pairwiseAffects(a Advisory, v string) bool {
 		return true
 	}
 	return slices.ContainsFunc(a.Ranges, func(r Range) bool {
-		if r.Introduced != "" && r.Introduced != "0" && version.Compare(a.Ecosystem, v, r.Introduced) < 0 {
+		if r.Introduced != "" && r.Introduced != "0" && version.Parse(a.Ecosystem, r.Introduced).OK() && version.Compare(a.Ecosystem, v, r.Introduced) < 0 {
 			return false
 		}
 		switch {

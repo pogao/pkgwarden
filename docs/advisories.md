@@ -78,7 +78,7 @@ An advisory lists affected versions, affected ranges, or both. pkgwarden compare
 | PyPI | PEP 440. |
 | RubyGems | `Gem::Version`. |
 
-A version the ecosystem's rules cannot parse sorts after every parseable version.
+A version the ecosystem's rules cannot parse sorts after every parseable version. A range whose lower bound cannot be parsed starts at the first release.
 
 From OSV records, pkgwarden reads the `versions` list and the ranges of type `SEMVER` and `ECOSYSTEM`. Each range starts at `introduced` and ends before `fixed`, or at `last_affected` inclusive, or never. Ranges of other types, such as `GIT`, are ignored.
 

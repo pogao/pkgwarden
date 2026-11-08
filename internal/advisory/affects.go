@@ -39,8 +39,13 @@ func (a Advisory) Matcher() Matcher {
 	}
 	for _, r := range a.Ranges {
 		b := bounds{fixed: parse(r.Fixed), lastAffected: parse(r.LastAffected)}
+		// An unparseable bound sorts after every parseable release, so as a
+		// lower bound it would exclude them all. Starting at the first
+		// release fails closed, as an unparseable upper bound does.
 		if r.Introduced != "0" {
-			b.introduced = parse(r.Introduced)
+			if v := parse(r.Introduced); v != nil && v.OK() {
+				b.introduced = v
+			}
 		}
 		m.ranges = append(m.ranges, b)
 	}
