@@ -45,8 +45,9 @@ npm also sends lockfile installs through pkgwarden. A `package-lock.json` entry 
 - The packument at `/npm/<name>` loses every blocked version from `versions` and `time`. Its tarball links point at pkgwarden.
 - The `latest` tag moves to the newest allowed stable version that is not newer than the version it pointed at. Other tags on blocked versions are removed.
 - A version manifest at `/npm/<name>/<version>` comes from the filtered packument.
-- A tarball download is checked against the version in its file name.
-- `npm audit` requests and every other `GET`, such as `npm search`, pass through to `registry.npmjs.org` unchanged.
+- A tarball download is checked against the version whose packument entry links to it, not the version in its file name.
+- `npm dist-tag ls` gets the tags of the filtered packument.
+- `npm audit` requests and the other registry endpoints under `/npm/-/`, such as `npm search`, pass through to `registry.npmjs.org` unchanged. Any other path gets 404.
 - Publishing and every other write method get 405. Publish to the public registry directly.
 
 ### What you see when a release is blocked
