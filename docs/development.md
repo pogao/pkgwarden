@@ -52,6 +52,8 @@ The script checks these behaviors:
 | npm | `npm install lodash@4.17.20` fails, because the release has a high vulnerability. |
 | npm | The tarball of `lodash@4.17.20` gets a 403 that names the advisory. |
 | npm | The tarball of `event-stream@3.3.6`, a malicious release npm unpublished, gets a 403. |
+| npm | `/npm/lodash/`, with a trailing slash, does not list `lodash@4.17.20`. |
+| npm | The tarball `express-3.0.0rc3.tgz` of `express@3.0.0-rc3` downloads. |
 | npm | No `@types/node` release younger than 7 days appears in the packument, `latest` is not one of them, and tarball links point at pkgwarden. |
 | PyPI | `pip download requests` succeeds. |
 | PyPI | The PEP 691 JSON page for `requests` lists files whose URLs point at pkgwarden. |
