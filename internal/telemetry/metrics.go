@@ -70,6 +70,10 @@ var (
 		Namespace: "pkgwarden", Name: "cache_requests_total",
 		Help: "Cache lookups, by cache (metadata or advisory) and result (hit or miss).",
 	}, []string{"cache", "result"})
+	advisorySources = metric.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: "pkgwarden", Name: "advisory_source_enabled",
+		Help: "1 for each advisory source this instance queries, 0 for each it does not.",
+	}, []string{"source"})
 	openSSFLastSuccess = metric.NewGauge(prometheus.GaugeOpts{
 		Namespace: "pkgwarden", Name: "openssf_last_success_timestamp_seconds",
 		Help: "Unix time of the last successful OpenSSF dataset load; 0 until the first.",
@@ -128,6 +132,17 @@ func RecordCache(cache string, hit bool) {
 		result = "hit"
 	}
 	cacheRequests.WithLabelValues(cache, result).Inc()
+}
+
+// SetAdvisorySources publishes which advisory sources, by name, are queried.
+func SetAdvisorySources(enabled map[string]bool) {
+	for source, on := range enabled {
+		v := 0.0
+		if on {
+			v = 1
+		}
+		advisorySources.WithLabelValues(source).Set(v)
+	}
 }
 
 // RecordOpenSSFLoad records a successful OpenSSF dataset load.
