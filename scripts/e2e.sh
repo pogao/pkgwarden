@@ -166,6 +166,13 @@ for eco in npm pypi rubygems go cargo; do
 	fi
 done
 
+sources=$(grep '^pkgwarden_advisory_source_enabled{' <<<"$metrics" | sort | tr '\n' ' ')
+if [[ $sources == 'pkgwarden_advisory_source_enabled{source="ghsa"} 0 pkgwarden_advisory_source_enabled{source="openssf"} 0 pkgwarden_advisory_source_enabled{source="osv"} 1 ' ]]; then
+	pass "advisory_source_enabled reports osv only"
+else
+	fail "advisory_source_enabled: $sources, want osv 1, ghsa and openssf 0"
+fi
+
 if grep -F 'pkgwarden_build_info{' <<<"$metrics" | grep -qF ",version=\"$version\""; then
 	pass "build_info reports version $version"
 else

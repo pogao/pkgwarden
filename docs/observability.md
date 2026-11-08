@@ -23,6 +23,7 @@ Every pkgwarden series starts with `pkgwarden_`. No metric has a package name or
 | `pkgwarden_upstream_requests_total` | counter | `host`, `code` | Outbound requests to registries and advisory sources. |
 | `pkgwarden_upstream_request_duration_seconds` | histogram | `host` | Time from sending an outbound request until its response headers arrived. |
 | `pkgwarden_cache_requests_total` | counter | `cache`, `result` | Lookups in the metadata cache and the advisory cache. |
+| `pkgwarden_advisory_source_enabled` | gauge | `source` | `1` for each advisory source the process queries and `0` for each it does not. OSV is always `1`. GHSA is `1` with a GitHub token, and OpenSSF is `1` with `-openssf`. |
 | `pkgwarden_openssf_last_success_timestamp_seconds` | gauge | none | Unix time of the last successful OpenSSF dataset load. `0` until the first load, and always `0` without `-openssf`. |
 | `pkgwarden_openssf_packages` | gauge | none | Packages in the loaded OpenSSF index. |
 | `pkgwarden_openssf_refresh_failures_total` | counter | none | Failed OpenSSF dataset refreshes. A refresh cut short by shutdown is not counted. |
@@ -45,6 +46,7 @@ The histograms use these bucket bounds in seconds: 0.005, 0.01, 0.025, 0.05, 0.1
 | `decision` | `allow`, `warn`, or `block`. |
 | `rule` | A rule name from [Rules](api.md#rules), such as `advisory/malicious` or `cooldown`. |
 | `cache` | `metadata` or `advisory`. |
+| `source` | `osv`, `ghsa`, or `openssf`. |
 | `result` | `hit` or `miss`. |
 
 ### What each counter counts
@@ -75,7 +77,9 @@ Each query answers one question a security engineer asks about a running proxy.
 | Is a registry rate-limiting pkgwarden? | `sum by (host) (rate(pkgwarden_upstream_requests_total{code="429"}[5m]))` |
 | How slow is each upstream? | `histogram_quantile(0.95, sum by (host, le) (rate(pkgwarden_upstream_request_duration_seconds_bucket[5m])))` |
 | How often do the caches answer? | `sum by (cache) (rate(pkgwarden_cache_requests_total{result="hit"}[1h])) / sum by (cache) (rate(pkgwarden_cache_requests_total[1h]))` |
-| Is the OpenSSF index older than 12 hours? Use only on instances with `-openssf`. | `time() - pkgwarden_openssf_last_success_timestamp_seconds > 12 * 3600` |
+| Which advisory sources does each instance query? | `pkgwarden_advisory_source_enabled == 1` |
+| Which instances lost their GitHub token? | `pkgwarden_advisory_source_enabled{source="ghsa"} == 0` |
+| Is the OpenSSF index older than 12 hours, on instances that use it? | `(time() - pkgwarden_openssf_last_success_timestamp_seconds > 12 * 3600) and on (instance) pkgwarden_advisory_source_enabled{source="openssf"} == 1` |
 | Did the OpenSSF index shrink? | `delta(pkgwarden_openssf_packages[1d]) < 0` |
 | Are OpenSSF refreshes failing? | `increase(pkgwarden_openssf_refresh_failures_total[1h]) > 0` |
 | Which instances serve unchecked packages when advisories fail? | `pkgwarden_policy_info{fail_open="true"}` |

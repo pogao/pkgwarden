@@ -68,6 +68,7 @@ func run(ctx context.Context, cfg *config) error {
 		go feed.Run(ctx, cfg.openSSFRefresh)
 		sources = append(sources, feed)
 	}
+	telemetry.SetAdvisorySources(map[string]bool{"osv": true, "ghsa": cfg.ghsaToken != "", "openssf": cfg.openSSF})
 	engine := policy.New(cfg.policy, advisory.Cached(advisory.Merge(sources...), cfg.advisoryTTL))
 
 	up := proxy.NewUpstream(client, "pkgwarden (+https://github.com/pogao/pkgwarden)", cfg.metadataTTL)

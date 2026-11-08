@@ -197,3 +197,14 @@ func TestTransportCountsFailures(t *testing.T) {
 		t.Errorf("upstream lines %v, want one with err and no status", up)
 	}
 }
+
+func TestSetAdvisorySources(t *testing.T) {
+	telemetry.SetAdvisorySources(map[string]bool{"osv": true, "ghsa": false, "openssf": true})
+
+	for source, want := range map[string]float64{"osv": 1, "ghsa": 0, "openssf": 1} {
+		labels := map[string]string{"source": source}
+		if got := telemetrytest.Value(t, "pkgwarden_advisory_source_enabled", labels); got != want {
+			t.Errorf("pkgwarden_advisory_source_enabled%v = %v, want %v", labels, got, want)
+		}
+	}
+}

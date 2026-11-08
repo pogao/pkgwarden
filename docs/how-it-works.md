@@ -76,7 +76,7 @@ A 403 on an info file makes Bundler give up on the compact index for the whole s
 
 ## Caching keeps upstream traffic low
 
-pkgwarden keeps three caches in memory. None survives a restart. `pkgwarden_cache_requests_total` counts the hits and misses of the first two, and the `pkgwarden_openssf_` metrics show the state of the third.
+pkgwarden keeps three caches in memory. None survives a restart. `pkgwarden_cache_requests_total` counts the hits and misses of the first two, and the `pkgwarden_openssf_` metrics show the state of the third. `pkgwarden_advisory_source_enabled{source="openssf"}` is `1` only when the third exists.
 
 - pkgwarden caches upstream metadata, such as packuments, index files, version lists, and download counts, for `-metadata-ttl` (default 5 minutes). The cache holds at most 512 documents. Concurrent requests for the same document share one upstream round trip.
 - pkgwarden caches advisory lookups per ecosystem and package name for `-advisory-ttl` (default 1 hour). The cache holds at most 10000 packages. A failed lookup is not cached, so the next request tries again.
