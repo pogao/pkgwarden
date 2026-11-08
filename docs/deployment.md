@@ -13,7 +13,7 @@ To label the image with a version, pass the `VERSION` build argument. pkgwarden 
 
 	docker build --build-arg VERSION="$(git describe --tags --always --dirty)" -t pkgwarden .
 
-The `Dockerfile` builds a static binary with `golang:1.27-alpine` and `CGO_ENABLED=0`, then copies it into `gcr.io/distroless/static-debian12:nonroot`. The container runs as the `nonroot` user, listens on port 8080, and has `/pkgwarden` as its entrypoint. The image has no shell.
+The `Dockerfile` builds a static binary with `golang:1.27-alpine` and `CGO_ENABLED=0`, then copies it into an empty `scratch` image together with the CA certificate bundle from the build image. The final image holds only those two files. It has no shell, no package manager, no `/tmp`, and no time zone data, none of which pkgwarden uses. The container runs as user and group 65532, listens on port 8080, and has `/pkgwarden` as its entrypoint. The user is numeric, so Kubernetes `runAsNonRoot: true` accepts the image. The CA bundle is as recent as the `golang:1.27-alpine` image the build used, so rebuild to pick up certificate changes.
 
 To pass flags, put them after the image name:
 
