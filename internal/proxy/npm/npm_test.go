@@ -311,6 +311,22 @@ func TestManifestForDroppedTagGivesTargetVerdict(t *testing.T) {
 	}
 }
 
+func TestDistTagsComeFromFilteredPackument(t *testing.T) {
+	e := newEnv(t, week, nil)
+	for _, path := range []string{"/npm/-/package/left-pad/dist-tags", "/npm/-/package/@acme%2fwidget/dist-tags", "/npm/-/package/@acme/widget/dist-tags"} {
+		resp, body := get(t, e.proxy.URL+path)
+		var tags map[string]string
+		if err := json.Unmarshal(body, &tags); err != nil || resp.StatusCode != http.StatusOK {
+			t.Errorf("%s: status %d body %s", path, resp.StatusCode, body)
+			continue
+		}
+		want := map[string]string{"latest": "1.0.0", "legacy": "0.9.0", "v3": "3.0.0"}
+		if d := resp.Header.Get("X-Pkgwarden-Decision"); !maps.Equal(tags, want) || d != "allow" {
+			t.Errorf("%s: tags %v decision %q, want %v allow", path, tags, d, want)
+		}
+	}
+}
+
 func assertBlocked(t *testing.T, resp *http.Response, body []byte, want ...string) {
 	t.Helper()
 	if resp.StatusCode != http.StatusForbidden {
@@ -333,7 +349,7 @@ func TestPackageWideAdvisoryBlocks(t *testing.T) {
 	e := newEnv(t, week, fakeSource{"@acme/widget": {{
 		ID: "MAL-2026-0001", Source: "openssf", Kind: advisory.Malicious, Summary: "Malicious code in @acme/widget",
 	}}})
-	for _, path := range []string{"/npm/@acme%2fwidget", "/npm/@acme/widget/-/widget-1.0.0.tgz"} {
+	for _, path := range []string{"/npm/@acme%2fwidget", "/npm/@acme/widget/-/widget-1.0.0.tgz", "/npm/-/package/@acme%2fwidget/dist-tags"} {
 		resp, body := get(t, e.proxy.URL+path)
 		assertBlocked(t, resp, body, "MAL-2026-0001")
 	}
