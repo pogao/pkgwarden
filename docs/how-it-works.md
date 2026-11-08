@@ -76,15 +76,16 @@ A 403 on an info file makes Bundler give up on the compact index for the whole s
 
 ## Caching keeps upstream traffic low
 
-pkgwarden keeps three caches in memory. None survives a restart. `pkgwarden_cache_requests_total` counts the hits and misses of the first two, and the `pkgwarden_openssf_` metrics show the state of the third. `pkgwarden_advisory_source_enabled{source="openssf"}` is `1` only when the third exists.
+pkgwarden keeps four caches in memory. None survives a restart. `pkgwarden_cache_requests_total` counts the hits and misses of the first three, and the `pkgwarden_openssf_` metrics show the state of the fourth. `pkgwarden_advisory_source_enabled{source="openssf"}` is `1` only when the fourth exists.
 
 - pkgwarden caches upstream metadata, such as packuments, index files, version lists, and download counts, for `-metadata-ttl` (default 5 minutes). The cache holds at most 512 documents. Concurrent requests for the same document share one upstream round trip.
 - pkgwarden caches advisory lookups per ecosystem and package name for `-advisory-ttl` (default 1 hour). The cache holds at most 10000 packages. A failed lookup is not cached, so the next request tries again.
+- The Go adapter caches the publish time from each version's `.info` file for 24 hours. The cache holds at most 100000 module versions. It is separate from the metadata cache, so a module with thousands of versions neither overflows it nor pushes out other ecosystems' documents. A `.info` file that upstream does not have is not cached, so the next request tries again.
 - The OpenSSF dataset, when `-openssf` is set, lives in an in-memory index that a background task rebuilds every `-openssf-refresh` (default 6 hours). After a failed rebuild, the task retries sooner, starting at 30 seconds.
 
 pkgwarden never caches artifacts. It does not cache the assessment either. It recomputes the assessment from the cached inputs on every request, so a release leaves its cooldown the moment it reaches the age, without waiting for a cache to expire.
 
-The first request for a Go module with many versions is the slow case. The adapter fetches one `.info` file per listed version, eight at a time, to learn each publish time.
+The first request for a Go module with many versions is the slow case. The adapter fetches one `.info` file per listed version, eight at a time, to learn each publish time. Later requests fetch only the `.info` files missing from the cache.
 
 ## Failing closed is the default
 

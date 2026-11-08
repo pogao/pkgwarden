@@ -127,7 +127,7 @@ The lowest level that reaches the log. Use `debug`, `info`, `warn`, or `error`. 
 
 ### `-metadata-ttl`
 
-How long pkgwarden caches each upstream metadata document, such as a packument, an index file, a version list, or a download count. The cache holds at most 512 documents. `0` or a negative value turns the cache off, but concurrent requests for one document still share one upstream request.
+How long pkgwarden caches each upstream metadata document, such as a packument, an index file, a version list, or a download count. The cache holds at most 512 documents. `0` or a negative value turns the cache off, but concurrent requests for one document still share one upstream request. Go publish times from `.info` files have their own 24-hour cache, which this flag does not change.
 
 ## Policy flags
 

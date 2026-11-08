@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -38,9 +39,20 @@ const (
 )
 
 type fakeModule struct {
-	listed []string
-	times  map[string]time.Time
-	latest string
+	listed     []string
+	times      map[string]time.Time
+	infoStatus map[string]int
+	latest     string
+}
+
+func manyVersions(n int) fakeModule {
+	m := fakeModule{times: map[string]time.Time{}}
+	for i := range n {
+		v := fmt.Sprintf("v1.0.%d", i)
+		m.listed = append(m.listed, v)
+		m.times[v] = old
+	}
+	return m
 }
 
 // modules is keyed by escaped module path, the only form a real proxy serves.
@@ -59,6 +71,17 @@ var modules = map[string]fakeModule{
 		times:  map[string]time.Time{"v0.1.0-alpha.1": old},
 		latest: "v0.1.0-alpha.1",
 	},
+	"example.com/gap": {
+		listed:     []string{"v1.0.0", "v1.1.0", "v1.2.0"},
+		times:      map[string]time.Time{"v1.0.0": old, "v1.1.0": old, "v1.2.0": old},
+		infoStatus: map[string]int{"v1.1.0": http.StatusNotFound, "v1.2.0": http.StatusGone},
+	},
+	"example.com/broken": {
+		listed:     []string{"v1.0.0", "v1.1.0"},
+		times:      map[string]time.Time{"v1.0.0": old, "v1.1.0": old},
+		infoStatus: map[string]int{"v1.1.0": http.StatusInternalServerError},
+	},
+	"example.com/many": manyVersions(600),
 }
 
 func infoJSON(v string, t time.Time) string {
@@ -68,7 +91,7 @@ func infoJSON(v string, t time.Time) string {
 
 func zipBytes(path string) []byte { return []byte("PK\x03\x04 module zip " + path) }
 
-func fakeProxy(t *testing.T) *httptest.Server {
+func fakeProxy(t *testing.T, infoHits *atomic.Int64) *httptest.Server {
 	t.Helper()
 	versionEscapes := strings.NewReplacer("!r!c", "RC")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -113,6 +136,13 @@ func fakeProxy(t *testing.T) *httptest.Server {
 			notFound()
 			return
 		}
+		if file[dot:] == ".info" {
+			infoHits.Add(1)
+			if status, ok := m.infoStatus[v]; ok {
+				w.WriteHeader(status)
+				return
+			}
+		}
 		switch file[dot:] {
 		case ".info":
 			w.Write([]byte(infoJSON(v, tm)))
@@ -130,21 +160,23 @@ func fakeProxy(t *testing.T) *httptest.Server {
 }
 
 type env struct {
-	proxy *httptest.Server
-	reg   *goproxy.Registry
+	proxy    *httptest.Server
+	reg      *goproxy.Registry
+	infoHits *atomic.Int64
 }
 
 func newEnv(t *testing.T, src fakeSource) env {
 	t.Helper()
 	engine := policy.New(policy.Config{Cooldown: 7 * 24 * time.Hour}, src)
+	infoHits := new(atomic.Int64)
 	reg := goproxy.New(goproxy.Options{
-		Upstream: fakeProxy(t).URL,
+		Upstream: fakeProxy(t, infoHits).URL,
 		Engine:   engine,
 		HTTP:     proxy.NewUpstream(http.DefaultClient, "pkgwarden-test", time.Minute),
 	})
 	srv := httptest.NewServer(proxy.NewServer(engine, reg))
 	t.Cleanup(srv.Close)
-	return env{proxy: srv, reg: reg}
+	return env{proxy: srv, reg: reg, infoHits: infoHits}
 }
 
 func get(t *testing.T, url string) (int, string) {
@@ -237,6 +269,56 @@ func TestZip(t *testing.T) {
 	} {
 		if status, body := get(t, e.proxy.URL+"/go/"+p); status != http.StatusBadRequest {
 			t.Errorf("%s: status %d body %q, want 400", p, status, body)
+		}
+	}
+}
+
+func TestMissingInfoIsAnUnknownPublishTime(t *testing.T) {
+	e := newEnv(t, nil)
+	if status, body := get(t, e.proxy.URL+"/go/example.com/gap/@v/list"); status != http.StatusOK || body != "v1.0.0\n" {
+		t.Errorf("list: status %d body %q, want 200 with only v1.0.0", status, body)
+	}
+	for _, v := range []string{"v1.1.0", "v1.2.0"} {
+		status, body := get(t, e.proxy.URL+"/go/example.com/gap/@v/"+v+".zip")
+		assertBlocked(t, status, body, "go/example.com/gap@"+v, "cooldown", "publish time unknown")
+	}
+	if status, body := get(t, e.proxy.URL+"/go/example.com/gap/@v/v1.0.0.zip"); status != http.StatusOK {
+		t.Errorf("v1.0.0.zip: status %d body %q, want 200", status, body)
+	}
+}
+
+func TestInfoServerErrorFailsTheModule(t *testing.T) {
+	e := newEnv(t, nil)
+	for _, p := range []string{"@v/list", "@v/v1.0.0.zip"} {
+		if status, body := get(t, e.proxy.URL+"/go/example.com/broken/"+p); status != http.StatusBadGateway {
+			t.Errorf("%s: status %d body %q, want 502", p, status, body)
+		}
+	}
+}
+
+func TestPublishTimesAreFetchedOnce(t *testing.T) {
+	e := newEnv(t, nil)
+	tests := []struct {
+		module string
+		lines  int
+	}{
+		{"example.com/!foo/bar", 3},
+		{"example.com/many", 600},
+	}
+	for _, tt := range tests {
+		for i := range 2 {
+			before := e.infoHits.Load()
+			status, body := get(t, e.proxy.URL+"/go/"+tt.module+"/@v/list")
+			if n := strings.Count(body, "\n"); status != http.StatusOK || n != tt.lines {
+				t.Fatalf("%s request %d: status %d with %d versions, want 200 with %d", tt.module, i+1, status, n, tt.lines)
+			}
+			hits := e.infoHits.Load() - before
+			if i == 0 && hits == 0 {
+				t.Errorf("%s: first list fetched no .info files", tt.module)
+			}
+			if i == 1 && hits != 0 {
+				t.Errorf("%s: second list fetched %d .info files, want 0", tt.module, hits)
+			}
 		}
 	}
 }
