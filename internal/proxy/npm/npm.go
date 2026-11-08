@@ -299,7 +299,7 @@ func (r *Registry) serveTarball(w http.ResponseWriter, req *http.Request, rt rou
 		return
 	}
 	defer resp.Body.Close()
-	proxy.ServeArtifact(ctx, w, s, resp)
+	proxy.ServeArtifact(w, req, s, resp)
 }
 
 func (r *Registry) passthrough(w http.ResponseWriter, req *http.Request) {
@@ -309,7 +309,7 @@ func (r *Registry) passthrough(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	defer resp.Body.Close()
-	proxy.Relay(w, resp)
+	proxy.Relay(w, req, resp)
 }
 
 func (r *Registry) forwardPost(w http.ResponseWriter, req *http.Request) {
@@ -319,7 +319,7 @@ func (r *Registry) forwardPost(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	defer resp.Body.Close()
-	proxy.Relay(w, resp)
+	proxy.Relay(w, req, resp)
 }
 
 func (r *Registry) upstreamURL(req *http.Request) string {

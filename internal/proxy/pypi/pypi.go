@@ -182,7 +182,7 @@ func (r *Registry) weeklyDownloads(ctx context.Context, name string) int64 {
 func (r *Registry) root(w http.ResponseWriter, req *http.Request) {
 	if resp, ok := open(w, req, r.o.HTTP, r.o.PyPI+"/simple/", "Accept"); ok {
 		defer resp.Body.Close()
-		proxy.Relay(w, resp)
+		proxy.Relay(w, req, resp)
 	}
 }
 
@@ -255,10 +255,10 @@ func (r *Registry) file(w http.ResponseWriter, req *http.Request) {
 	}
 	defer resp.Body.Close()
 	if metadata {
-		proxy.Relay(w, resp)
+		proxy.Relay(w, req, resp)
 		return
 	}
-	proxy.ServeArtifact(ctx, w, s, resp)
+	proxy.ServeArtifact(w, req, s, resp)
 }
 
 // source returns the upstream URL of a distribution file, or of its PEP 658
