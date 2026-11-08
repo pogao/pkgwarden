@@ -321,6 +321,45 @@ func TestHeuristicsMaintainerChangeAffectsOnlyThatRelease(t *testing.T) {
 	assertMentions(t, v, `published by "mallory", who never published an earlier release`, "warn threshold 30")
 }
 
+func TestHeuristicsUndatedReleaseCountsAsEarlierPublisher(t *testing.T) {
+	tests := []struct {
+		name  string
+		first Release
+	}{
+		{"undated", Release{Version: "1.0.0", Publishers: []string{"eve"}}},
+		{"dated", Release{Version: "1.0.0", Published: daysAgo(800), Publishers: []string{"eve"}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a := assessHeuristics(&Package{
+				Ecosystem: ecosystem.Npm, Name: "acme-widgets", Created: daysAgo(900), WeeklyDownloads: 5000,
+				Releases: []Release{
+					tt.first,
+					{Version: "1.1.0", Published: daysAgo(400), Publishers: []string{"alice"}},
+					{Version: "1.2.0", Published: daysAgo(10), Publishers: []string{"eve"}},
+				},
+			})
+			assertMentions(t, assertDecision(t, a, "1.1.0", Warn), `published by "alice", who never published an earlier release`)
+			for _, version := range []string{"1.0.0", "1.2.0"} {
+				if v := a.Release(version); len(v.Findings) != 0 {
+					t.Errorf("%s: unexpected findings %+v", version, v.Findings)
+				}
+			}
+		})
+	}
+}
+
+func TestHeuristicsMaintainerChangeNamesEachPublisherOnce(t *testing.T) {
+	a := assessHeuristics(&Package{
+		Ecosystem: ecosystem.Npm, Name: "acme-widgets", Created: daysAgo(900), WeeklyDownloads: 5000,
+		Releases: []Release{
+			{Version: "1.0.0", Published: daysAgo(800), Publishers: []string{"alice"}},
+			{Version: "1.1.0", Published: daysAgo(10), Publishers: []string{"carol", "Carol"}},
+		},
+	})
+	assertMentions(t, assertDecision(t, a, "1.1.0", Warn), `published by "carol", who never published an earlier release`)
+}
+
 func TestHeuristicsWarnBand(t *testing.T) {
 	a := assessHeuristics(&Package{
 		Ecosystem: ecosystem.Npm, Name: "acme-widgets", Created: daysAgo(10), WeeklyDownloads: 5000,
