@@ -39,7 +39,8 @@ func main() {
 		os.Exit(2)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
+	// Restoring default signal handling lets a second signal kill a slow drain.
+	context.AfterFunc(ctx, stop)
 	if err := run(ctx, cfg); err != nil {
 		slog.Error("exiting", "err", err)
 		os.Exit(1)
@@ -124,11 +125,10 @@ func run(ctx context.Context, cfg *config) error {
 	select {
 	case err = <-errc:
 	case <-ctx.Done():
+		slog.Info("shutting down", "signal", context.Cause(ctx))
 	}
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
 	for _, srv := range servers {
-		if serr := srv.Shutdown(shutdownCtx); err == nil {
+		if serr := srv.Shutdown(context.Background()); err == nil {
 			err = serr
 		}
 	}
