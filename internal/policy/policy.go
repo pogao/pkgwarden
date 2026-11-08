@@ -65,7 +65,8 @@ type Rule string
 const (
 	RuleAllowlist        Rule = "allowlist"
 	RuleCooldown         Rule = "cooldown"
-	RuleAdvisory         Rule = "advisory"
+	RuleMalicious        Rule = "advisory/malicious"
+	RuleVulnerability    Rule = "advisory/vulnerability"
 	RuleAdvisoryLookup   Rule = "advisory-lookup"
 	RuleNewPackage       Rule = "heuristic/new-package"
 	RuleLowDownloads     Rule = "heuristic/low-downloads"

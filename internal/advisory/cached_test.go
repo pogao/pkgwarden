@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/pogao/pkgwarden/internal/ecosystem"
+	"github.com/pogao/pkgwarden/internal/telemetry/telemetrytest"
 )
 
 type countingSource struct {
@@ -119,4 +120,22 @@ func TestCachedCollapsesConcurrentMisses(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestCachedCountsHitsAndMisses(t *testing.T) {
+	hit := map[string]string{"cache": "advisory", "result": "hit"}
+	miss := map[string]string{"cache": "advisory", "result": "miss"}
+	hits, misses := telemetrytest.Value(t, "pkgwarden_cache_requests_total", hit), telemetrytest.Value(t, "pkgwarden_cache_requests_total", miss)
+	c := Cached(&countingSource{}, time.Minute)
+	for range 3 {
+		if _, err := c.Lookup(context.Background(), ecosystem.Npm, "left-pad"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if d := telemetrytest.Value(t, "pkgwarden_cache_requests_total", miss) - misses; d != 1 {
+		t.Errorf("advisory misses grew by %v, want 1", d)
+	}
+	if d := telemetrytest.Value(t, "pkgwarden_cache_requests_total", hit) - hits; d != 2 {
+		t.Errorf("advisory hits grew by %v, want 2", d)
+	}
 }

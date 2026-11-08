@@ -2,12 +2,14 @@ package advisory
 
 import (
 	"context"
+	"log/slog"
 	"time"
 
 	"golang.org/x/sync/singleflight"
 
 	"github.com/pogao/pkgwarden/internal/cache"
 	"github.com/pogao/pkgwarden/internal/ecosystem"
+	"github.com/pogao/pkgwarden/internal/telemetry"
 )
 
 const cachedMaxPackages = 10000
@@ -33,8 +35,11 @@ func Cached(src Source, ttl time.Duration) Source {
 func (c *cached) Lookup(ctx context.Context, eco ecosystem.Ecosystem, name string) ([]Advisory, error) {
 	k := keyOf(eco, name)
 	if advs, ok := c.results.Get(k); ok {
+		telemetry.RecordCache("advisory", true)
+		slog.DebugContext(ctx, "advisory cache hit", "ecosystem", string(eco), "package", name)
 		return advs, nil
 	}
+	telemetry.RecordCache("advisory", false)
 	ch := c.flight.DoChan(string(k.eco)+"\x00"+k.name, func() (any, error) {
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), lookupTimeout)
 		defer cancel()

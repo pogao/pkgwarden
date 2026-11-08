@@ -216,7 +216,7 @@ func (r *Registry) serveList(w http.ResponseWriter, req *http.Request, rt route)
 		return
 	}
 	a := r.o.Engine.Assess(req.Context(), pkg)
-	if !proxy.Enforce(w, proxy.Text, "go/"+rt.module, a.Package) {
+	if !proxy.Enforce(req.Context(), w, proxy.Text, proxy.StageMetadata, proxy.Subject{Ecosystem: ecosystem.Go, Name: rt.module}, a.Package) {
 		return
 	}
 	var b strings.Builder
@@ -235,9 +235,10 @@ func (r *Registry) serveLatest(w http.ResponseWriter, req *http.Request, rt rout
 		proxy.WriteError(w, err)
 		return
 	}
-	a := r.o.Engine.Assess(req.Context(), pkg)
-	subject := "go/" + rt.module
-	if !proxy.Enforce(w, proxy.Text, subject, a.Package) {
+	ctx := req.Context()
+	a := r.o.Engine.Assess(ctx, pkg)
+	s := proxy.Subject{Ecosystem: ecosystem.Go, Name: rt.module}
+	if !proxy.Enforce(ctx, w, proxy.Text, proxy.StageMetadata, s, a.Package) {
 		return
 	}
 	versions := make([]string, len(pkg.Releases))
@@ -246,8 +247,8 @@ func (r *Registry) serveLatest(w http.ResponseWriter, req *http.Request, rt rout
 	}
 	v := newest(versions, a.Allowed)
 	if v == "" {
-		want := newest(versions, func(string) bool { return true })
-		proxy.Enforce(w, proxy.Text, subject+"@"+want, a.Release(want))
+		s.Version = newest(versions, func(string) bool { return true })
+		proxy.Enforce(ctx, w, proxy.Text, proxy.StageMetadata, s, a.Release(s.Version))
 		return
 	}
 	esc, _ := module.EscapePath(rt.module)
@@ -293,11 +294,19 @@ func (r *Registry) serveZip(w http.ResponseWriter, req *http.Request, rt route, 
 		proxy.WriteError(w, err)
 		return
 	}
-	a := r.o.Engine.Assess(req.Context(), pkg)
-	if !proxy.Enforce(w, proxy.Text, "go/"+rt.module+"@"+rt.version, a.Release(rt.version)) {
+	ctx := req.Context()
+	s := proxy.Subject{Ecosystem: ecosystem.Go, Name: rt.module, Version: rt.version}
+	a := r.o.Engine.Assess(ctx, pkg)
+	if !proxy.Enforce(ctx, w, proxy.Text, proxy.StageArtifact, s, a.Release(rt.version)) {
 		return
 	}
-	r.passthrough(w, req, p)
+	resp, err := r.o.HTTP.Open(ctx, r.o.Upstream+"/"+p, nil)
+	if err != nil {
+		proxy.WriteError(w, err)
+		return
+	}
+	defer resp.Body.Close()
+	proxy.ServeArtifact(ctx, w, s, resp)
 }
 
 func (r *Registry) passthrough(w http.ResponseWriter, req *http.Request, p string) {

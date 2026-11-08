@@ -144,7 +144,7 @@ func (r *Registry) index(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	a := r.o.Engine.Assess(ctx, pkg)
-	if !proxy.Enforce(w, proxy.Text, "cargo/"+pkg.Name, a.Package) {
+	if !proxy.Enforce(ctx, w, proxy.Text, proxy.StageMetadata, proxy.Subject{Ecosystem: ecosystem.Cargo, Name: pkg.Name}, a.Package) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
@@ -209,8 +209,9 @@ func (r *Registry) download(w http.ResponseWriter, req *http.Request) {
 		proxy.WriteError(w, err)
 		return
 	}
+	s := proxy.Subject{Ecosystem: ecosystem.Cargo, Name: pkg.Name, Version: version}
 	a := r.o.Engine.Assess(ctx, pkg)
-	if !proxy.Enforce(w, proxy.Text, "cargo/"+pkg.Name+"@"+version, a.Release(version)) {
+	if !proxy.Enforce(ctx, w, proxy.Text, proxy.StageArtifact, s, a.Release(version)) {
 		return
 	}
 	src := r.o.Download + "/" + url.PathEscape(pkg.Name) + "/" + url.PathEscape(pkg.Name+"-"+version+".crate")
@@ -222,7 +223,7 @@ func (r *Registry) download(w http.ResponseWriter, req *http.Request) {
 	defer resp.Body.Close()
 	switch resp.StatusCode {
 	case http.StatusOK:
-		proxy.Relay(w, resp)
+		proxy.ServeArtifact(ctx, w, s, resp)
 	// static.crates.io is an object store that answers 403 for a missing key.
 	case http.StatusNotFound, http.StatusGone, http.StatusForbidden:
 		proxy.WriteError(w, fmt.Errorf("GET %s: %w", src, proxy.ErrNotFound))

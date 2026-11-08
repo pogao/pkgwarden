@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/pogao/pkgwarden/internal/ecosystem"
+	"github.com/pogao/pkgwarden/internal/telemetry/telemetrytest"
 )
 
 // archive is a fake codeload endpoint whose tarball the test can swap.
@@ -101,8 +102,15 @@ func TestOpenSSFRefresh(t *testing.T) {
 	a.set(http.StatusOK, tarball(t, datasetFiles(t)))
 	src := a.source()
 	ctx := context.Background()
+	start := time.Now().Unix()
 	if err := src.Refresh(ctx); err != nil {
 		t.Fatal(err)
+	}
+	if n := telemetrytest.Value(t, "pkgwarden_openssf_packages", nil); n != 2 {
+		t.Errorf("pkgwarden_openssf_packages = %v, want 2 (rustdecimal and evil-pkg)", n)
+	}
+	if ts := telemetrytest.Value(t, "pkgwarden_openssf_last_success_timestamp_seconds", nil); ts < float64(start) {
+		t.Errorf("pkgwarden_openssf_last_success_timestamp_seconds = %v, want at least %d", ts, start)
 	}
 
 	advs, err := src.Lookup(ctx, ecosystem.Cargo, "rustdecimal")
@@ -202,6 +210,7 @@ func TestOpenSSFRun(t *testing.T) {
 }
 
 func TestOpenSSFRunRetriesWithBackoff(t *testing.T) {
+	failuresBefore := telemetrytest.Value(t, "pkgwarden_openssf_refresh_failures_total", nil)
 	synctest.Test(t, func(t *testing.T) {
 		a := &archive{}
 		a.set(http.StatusBadGateway, []byte("bad gateway"))
@@ -219,6 +228,9 @@ func TestOpenSSFRunRetriesWithBackoff(t *testing.T) {
 		synctest.Wait()
 		if n := a.count(); n != 1 {
 			t.Fatalf("%d downloads at start, want 1", n)
+		}
+		if d := telemetrytest.Value(t, "pkgwarden_openssf_refresh_failures_total", nil) - failuresBefore; d != 1 {
+			t.Errorf("pkgwarden_openssf_refresh_failures_total grew by %v after one failed refresh, want 1", d)
 		}
 
 		// next waits gap and checks that exactly one more download happened

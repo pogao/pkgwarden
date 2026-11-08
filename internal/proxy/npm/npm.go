@@ -175,9 +175,9 @@ func (r *Registry) filtered(w http.ResponseWriter, req *http.Request, name strin
 		proxy.WriteError(w, err)
 		return nil, nil, nil, false
 	}
-	a := r.o.Engine.Assess(req.Context(), pkg)
-	subject := "npm/" + name
-	if !proxy.Enforce(w, proxy.JSON, subject, a.Package) {
+	ctx := req.Context()
+	a := r.o.Engine.Assess(ctx, pkg)
+	if !proxy.Enforce(ctx, w, proxy.JSON, proxy.StageMetadata, proxy.Subject{Ecosystem: ecosystem.Npm, Name: name}, a.Package) {
 		return nil, nil, nil, false
 	}
 	tarballBase := proxy.BaseURL(req, r.o.PublicURL) + "/" + string(ecosystem.Npm)
@@ -188,7 +188,7 @@ func (r *Registry) filtered(w http.ResponseWriter, req *http.Request, name strin
 	}
 	if !ok {
 		latest := p.distTags["latest"]
-		proxy.Enforce(w, proxy.JSON, subject+"@"+latest, a.Release(latest))
+		proxy.Enforce(ctx, w, proxy.JSON, proxy.StageMetadata, proxy.Subject{Ecosystem: ecosystem.Npm, Name: name, Version: latest}, a.Release(latest))
 		return nil, nil, nil, false
 	}
 	return body, p.distTags, a, true
@@ -221,7 +221,7 @@ func (r *Registry) serveManifest(w http.ResponseWriter, req *http.Request, rt ro
 	if !found {
 		// Missing from the filtered document means blocked or unpublished,
 		// and the verdict says which.
-		proxy.Enforce(w, proxy.JSON, "npm/"+rt.name+"@"+v, a.Release(v))
+		proxy.Enforce(req.Context(), w, proxy.JSON, proxy.StageMetadata, proxy.Subject{Ecosystem: ecosystem.Npm, Name: rt.name, Version: v}, a.Release(v))
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -229,23 +229,24 @@ func (r *Registry) serveManifest(w http.ResponseWriter, req *http.Request, rt ro
 }
 
 func (r *Registry) serveTarball(w http.ResponseWriter, req *http.Request, rt route) {
-	_, pkg, err := r.load(req.Context(), rt.name)
+	ctx := req.Context()
+	_, pkg, err := r.load(ctx, rt.name)
 	if err != nil {
 		proxy.WriteError(w, err)
 		return
 	}
-	v := rt.version()
-	a := r.o.Engine.Assess(req.Context(), pkg)
-	if !proxy.Enforce(w, proxy.JSON, "npm/"+rt.name+"@"+v, a.Release(v)) {
+	s := proxy.Subject{Ecosystem: ecosystem.Npm, Name: rt.name, Version: rt.version()}
+	a := r.o.Engine.Assess(ctx, pkg)
+	if !proxy.Enforce(ctx, w, proxy.JSON, proxy.StageArtifact, s, a.Release(s.Version)) {
 		return
 	}
-	resp, err := r.o.HTTP.Open(req.Context(), r.o.Registry+req.URL.EscapedPath(), nil)
+	resp, err := r.o.HTTP.Open(ctx, r.o.Registry+req.URL.EscapedPath(), nil)
 	if err != nil {
 		proxy.WriteError(w, err)
 		return
 	}
 	defer resp.Body.Close()
-	proxy.Relay(w, resp)
+	proxy.ServeArtifact(ctx, w, s, resp)
 }
 
 func (r *Registry) passthrough(w http.ResponseWriter, req *http.Request) {

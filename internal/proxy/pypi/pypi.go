@@ -167,14 +167,17 @@ func (r *Registry) weeklyDownloads(ctx context.Context, name string) int64 {
 	}
 	err := r.o.HTTP.FetchJSON(ctx, r.o.Stats+"/api/packages/"+url.PathEscape(name)+"/recent", &doc)
 	if err != nil || doc.Data.LastWeek == nil {
-		slog.Debug("pypi download count unavailable", "project", name, "err", err)
+		slog.DebugContext(ctx, "pypi download count unavailable", "project", name, "err", err)
 		return policy.UnknownDownloads
 	}
 	return *doc.Data.LastWeek
 }
 
 func (r *Registry) root(w http.ResponseWriter, req *http.Request) {
-	stream(w, req, r.o.HTTP, r.o.PyPI+"/simple/", "Accept")
+	if resp, ok := open(w, req, r.o.HTTP, r.o.PyPI+"/simple/", "Accept"); ok {
+		defer resp.Body.Close()
+		proxy.Relay(w, resp)
+	}
 }
 
 func (r *Registry) simple(w http.ResponseWriter, req *http.Request) {
@@ -192,7 +195,7 @@ func (r *Registry) simple(w http.ResponseWriter, req *http.Request) {
 	}
 	pkg := r.describe(ctx, p)
 	a := r.o.Engine.Assess(ctx, pkg)
-	if !proxy.Enforce(w, proxy.Text, "pypi/"+name, a.Package) {
+	if !proxy.Enforce(ctx, w, proxy.Text, proxy.StageMetadata, proxy.Subject{Ecosystem: ecosystem.PyPI, Name: name}, a.Package) {
 		return
 	}
 	page := index{name: name}
@@ -227,11 +230,12 @@ func (r *Registry) file(w http.ResponseWriter, req *http.Request) {
 		proxy.WriteError(w, err)
 		return
 	}
+	s := proxy.Subject{Ecosystem: ecosystem.PyPI, Name: p.name, Version: version}
 	a := r.o.Engine.Assess(ctx, r.describe(ctx, p))
-	if !proxy.Enforce(w, proxy.Text, "pypi/"+p.name+"@"+version, a.Release(version)) {
+	if !proxy.Enforce(ctx, w, proxy.Text, proxy.StageArtifact, s, a.Release(version)) {
 		return
 	}
-	src, ok := p.source(version, filename)
+	src, metadata, ok := p.source(version, filename)
 	if !ok {
 		http.NotFound(w, req)
 		return
@@ -240,25 +244,38 @@ func (r *Registry) file(w http.ResponseWriter, req *http.Request) {
 		proxy.WriteError(w, fmt.Errorf("%s: file URL %s is not under %s", filename, src, r.o.Files))
 		return
 	}
-	stream(w, req, r.o.HTTP, src, "Range")
+	resp, ok := open(w, req, r.o.HTTP, src, "Range")
+	if !ok {
+		return
+	}
+	defer resp.Body.Close()
+	if metadata {
+		proxy.Relay(w, resp)
+		return
+	}
+	proxy.ServeArtifact(ctx, w, s, resp)
 }
 
-func (p *project) source(version, filename string) (string, bool) {
+// source returns the upstream URL of a distribution file, or of its PEP 658
+// metadata file when metadata is true.
+func (p *project) source(version, filename string) (src string, metadata, ok bool) {
 	for _, f := range p.releases[version] {
 		switch {
 		case f.Filename == filename:
-			return f.URL, true
+			return f.URL, false, true
 		case f.CoreMetadata != "" && f.Filename+".metadata" == filename:
-			return f.URL + ".metadata", true
+			return f.URL + ".metadata", true, true
 		}
 	}
-	return "", false
+	return "", false, false
 }
 
 func (r *Registry) base(req *http.Request) string { return proxy.BaseURL(req, r.o.PublicURL) }
 
-// stream relays an upstream GET, forwarding the named request headers.
-func stream(w http.ResponseWriter, req *http.Request, up *proxy.Upstream, src string, forward ...string) {
+// open issues an upstream GET, forwarding the named request headers. It
+// returns the response when upstream answered 200 or 206; otherwise it has
+// written an error response and returns false.
+func open(w http.ResponseWriter, req *http.Request, up *proxy.Upstream, src string, forward ...string) (*http.Response, bool) {
 	h := http.Header{}
 	for _, k := range forward {
 		if v := req.Header.Get(k); v != "" {
@@ -268,15 +285,17 @@ func stream(w http.ResponseWriter, req *http.Request, up *proxy.Upstream, src st
 	resp, err := up.Open(req.Context(), src, h)
 	if err != nil {
 		proxy.WriteError(w, err)
-		return
+		return nil, false
 	}
-	defer resp.Body.Close()
 	switch resp.StatusCode {
 	case http.StatusOK, http.StatusPartialContent:
-		proxy.Relay(w, resp)
-	case http.StatusNotFound, http.StatusGone:
+		return resp, true
+	}
+	resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusGone {
 		proxy.WriteError(w, fmt.Errorf("GET %s: %w", src, proxy.ErrNotFound))
-	default:
+	} else {
 		proxy.WriteError(w, &proxy.StatusError{URL: src, Status: resp.StatusCode})
 	}
+	return nil, false
 }

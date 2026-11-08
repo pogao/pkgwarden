@@ -16,6 +16,7 @@ import (
 	"github.com/pogao/pkgwarden/internal/policy"
 	"github.com/pogao/pkgwarden/internal/proxy"
 	"github.com/pogao/pkgwarden/internal/proxy/goproxy"
+	"github.com/pogao/pkgwarden/internal/telemetry/telemetrytest"
 )
 
 type fakeSource map[string][]advisory.Advisory
@@ -216,9 +217,13 @@ func TestZip(t *testing.T) {
 		"example.com/pseudo/old/@v/" + pseudoV + ".zip",
 	}
 	for _, p := range allowed {
+		before := telemetrytest.Value(t, "pkgwarden_artifacts_served_total", map[string]string{"ecosystem": "go"})
 		status, body := get(t, e.proxy.URL+"/go/"+p)
 		if want := string(zipBytes(p)); status != http.StatusOK || body != want {
 			t.Errorf("%s: status %d body %q, want upstream bytes %q", p, status, body, want)
+		}
+		if d := telemetrytest.Value(t, "pkgwarden_artifacts_served_total", map[string]string{"ecosystem": "go"}) - before; d != 1 {
+			t.Errorf("%s: artifacts_served_total grew by %v, want 1", p, d)
 		}
 	}
 

@@ -4,7 +4,7 @@ pkgwarden reads its configuration from command-line flags and environment variab
 
 ## Help output
 
-This is the output of `go run ./cmd/pkgwarden -h 2>&1` at the current commit. The help goes to stderr, and the command exits with status 0. Rerun it to check this page.
+This is the output of `env -u GITHUB_TOKEN go run ./cmd/pkgwarden -h 2>&1` at the current commit. The help goes to stderr, and the command exits with status 0. Rerun it to check this page.
 
 	Usage of pkgwarden:
 	  -advisory-ttl duration
@@ -33,6 +33,8 @@ This is the output of `go run ./cmd/pkgwarden -h 2>&1` at the current commit. Th
 	    	weekly downloads below this count as unpopular (default 100)
 	  -metadata-ttl duration
 	    	how long upstream metadata is cached (default 5m0s)
+	  -metrics-listen string
+	    	address of a separate listener that alone serves /metrics (default: /metrics is served on -listen)
 	  -new-package-age duration
 	    	packages younger than this count as new (default 720h0m0s)
 	  -openssf
@@ -44,7 +46,7 @@ This is the output of `go run ./cmd/pkgwarden -h 2>&1` at the current commit. Th
 	  -public-url string
 	    	externally visible base URL, used in rewritten download links (default: derived from each request)
 
-There are 18 flags. To count them, run this:
+There are 19 flags. To count them, run this:
 
 	go run ./cmd/pkgwarden -h 2>&1 | grep -c '^  -'
 
@@ -88,6 +90,7 @@ A command-line flag replaces the environment value. It does not add to it. `-all
 | `-log-level` | level | `info` | `PKGWARDEN_LOG_LEVEL` |
 | `-low-downloads` | int | `100` | `PKGWARDEN_LOW_DOWNLOADS` |
 | `-metadata-ttl` | duration | `5m0s` | `PKGWARDEN_METADATA_TTL` |
+| `-metrics-listen` | string | empty, `/metrics` is served on `-listen` | `PKGWARDEN_METRICS_LISTEN` |
 | `-new-package-age` | duration | `720h0m0s` | `PKGWARDEN_NEW_PACKAGE_AGE` |
 | `-openssf` | bool | `false` | `PKGWARDEN_OPENSSF` |
 | `-openssf-refresh` | duration | `6h0m0s` | `PKGWARDEN_OPENSSF_REFRESH` |
@@ -99,6 +102,12 @@ A command-line flag replaces the environment value. It does not add to it. `-all
 ### `-listen`
 
 The TCP address the HTTP server listens on, in Go's `host:port` form. `:8080` listens on every interface. `127.0.0.1:8080` listens on loopback only. pkgwarden serves plain HTTP and has no TLS settings.
+
+### `-metrics-listen`
+
+The TCP address of a second HTTP listener that serves only `GET /metrics`, in the same form as `-listen`. When it is set, the main listener answers 404 for `/metrics`. When it is empty, the main listener serves `/metrics` next to `/healthz`. Both listeners shut down together. See [Metrics and request tracing](observability.md).
+
+`/metrics` has no authentication. To keep it away from the clients that reach `-listen`, bind `-metrics-listen` to an address only your monitoring can reach, such as `127.0.0.1:9090` or an internal interface.
 
 ### `-public-url`
 
@@ -114,7 +123,7 @@ When `-public-url` is empty, pkgwarden builds the base URL from each request. It
 
 ### `-log-level`
 
-The lowest level that reaches the log. Use `debug`, `info`, `warn`, or `error`. Case does not matter. Any other value stops pkgwarden at startup with exit status 2. pkgwarden writes JSON lines to stderr. See [Read the logs](deployment.md#read-the-logs).
+The lowest level that reaches the log. Use `debug`, `info`, `warn`, or `error`. Case does not matter. Any other value stops pkgwarden at startup with exit status 2. pkgwarden writes JSON lines to stderr. At `info`, it logs one `request` line per request and one `upstream` line per outbound call. `debug` adds the cache lines that explain a missing `upstream` line, and the `request` lines for `/healthz` and `/metrics`. See [Read the logs](deployment.md#read-the-logs).
 
 ### `-metadata-ttl`
 

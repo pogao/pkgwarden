@@ -66,7 +66,7 @@ If npm fetches the tarball directly, such as from a lockfile, it prints pkgwarde
 
 	$ npm install --no-audit --registry http://127.0.0.1:18181/npm/ http://127.0.0.1:18181/npm/lodash/-/lodash-4.17.20.tgz
 	npm error code E403
-	npm error 403 403 Forbidden - GET http://127.0.0.1:18181/npm/lodash/-/lodash-4.17.20.tgz - pkgwarden blocked npm/lodash@4.17.20: advisory: GHSA-35jh-r3h4-6jhm (high vulnerability, via osv): Command Injection in lodash https://osv.dev/vulnerability/GHSA-35jh-r3h4-6jhm; advisory: GHSA-r5fr-rjxr-66jc (high vulnerability, via osv): lodash vulnerable to Code Injection via `_.template` imports key names https://osv.dev/vulnerabi...
+	npm error 403 403 Forbidden - GET http://127.0.0.1:18181/npm/lodash/-/lodash-4.17.20.tgz - pkgwarden blocked npm/lodash@4.17.20: advisory/vulnerability: GHSA-35jh-r3h4-6jhm (high vulnerability, via osv): Command Injection in lodash https://osv.dev/vulnerability/GHSA-35jh-r3h4-6jhm; advisory/vulnerability: GHSA-r5fr-rjxr-66jc (high vulnerability, via osv): lodash vulnerable to Code Injection via `_.template` imports key names https://osv... (request 0d43614cae40e59f3c498ff91116a7be)
 	...
 
 If the whole package is blocked, or every version of it is, the packument request itself gets the 403, and npm prints the reason in the same form.
@@ -207,14 +207,14 @@ The go command prints the 403 body as `server response:`:
 	$ GOPROXY=http://127.0.0.1:18181/go go get golang.org/x/text@v0.3.6
 	go: downloading golang.org/x/text v0.3.6
 	go: golang.org/x/text@v0.3.6: reading http://127.0.0.1:18181/go/golang.org/x/text/@v/v0.3.6.zip: 403 Forbidden
-		server response: pkgwarden blocked go/golang.org/x/text@v0.3.6: advisory: GHSA-69ch-w2m2-3vjp (high vulnerability, via osv): golang.org/x/text/language Denial of service via crafted Accept-Language header https://osv.dev/...; advisory: GHSA-ppp9-7jff-5vj2 (high vulnerability, via osv): golang.org/x/text/language Out-of-bounds Read vulnerability https://osv.dev/vulnerability/GHSA-p...
+		server response: pkgwarden blocked go/golang.org/x/text@v0.3.6: advisory/vulnerability: GHSA-69ch-w2m2-3vjp (high vulnerability, via osv): golang.org/x/text/language Denial of service via crafted Accept-Language header ht...; advisory/vulnerability: GHSA-ppp9-7jff-5vj2 (high vulnerability, via osv): golang.org/x/text/language Out-of-bounds Read vulnerability https://osv.dev/vulner... (request 3e91355d824c4722c4475314da6064de)
 
 Each reason in the message is cut to 160 bytes, which is where the `...` comes from. The go command keeps at most 8 lines and 648 bytes of a server response and replaces the rest with `[Truncated: too long.]`. The limits are in `cmd/go/internal/web/api.go`. pkgwarden caps its messages to stay inside them.
 
 If the whole module is blocked, the version list request gets the 403:
 
 	go: github.com/google/uuid@latest: module github.com/google/uuid: reading http://127.0.0.1:18182/go/github.com/google/uuid/@v/list: 403 Forbidden
-		server response: pkgwarden blocked go/github.com/google/uuid: advisory-lookup: advisory lookup failed: osv lookup go/github.com/google/uuid: Post "http://127.0.0.1:1/v1/query": dial tcp 127.0.0.1:1: connect: connection ...
+		server response: pkgwarden blocked go/github.com/google/uuid: advisory-lookup: advisory lookup failed: osv lookup go/github.com/google/uuid: Post "http://127.0.0.1:1/v1/query": dial tcp 127.0.0.1:1: connect: connection ... (request 84afae7698659e41e9e62319ac3cf665)
 
 That output came from an instance whose `-osv-url` pointed at a closed port.
 
@@ -254,7 +254,7 @@ Cargo sees only the allowed versions. This output is trimmed after the first fou
 A direct download gets the 403 with the reason:
 
 	$ curl -s http://127.0.0.1:18181/cargo/api/v1/crates/smallvec/1.6.0/download
-	pkgwarden blocked cargo/smallvec@1.6.0: advisory: GHSA-43w2-9j62-hq99 (critical vulnerability, via osv): Buffer overflow in SmallVec::insert_many https://osv.dev/vulnerability/GHSA-43w2-9j62-hq99
+	pkgwarden blocked cargo/smallvec@1.6.0: advisory/vulnerability: GHSA-43w2-9j62-hq99 (critical vulnerability, via osv): Buffer overflow in SmallVec::insert_many https://osv.dev/vulnerability/GHSA-43... (request f3b81df0468fbbea48d308745598b8ed)
 
 ## Warnings
 

@@ -1,6 +1,6 @@
 # Deploy pkgwarden
 
-This guide builds and runs pkgwarden, puts it behind TLS, opens the network paths it needs, and explains its logs and its limits. For every flag, see the [configuration reference](configuration.md).
+This guide builds and runs pkgwarden, puts it behind TLS, opens the network paths it needs, and explains its logs, its metrics, and its limits. For every flag, see the [configuration reference](configuration.md).
 
 ## Build and run the container image
 
@@ -96,32 +96,61 @@ pkgwarden reads at most 128 MiB of a metadata document and drops the rest. A JSO
 
 ## Read the logs
 
-pkgwarden writes one JSON object per line to stderr. Each line has `time`, `level`, and `msg`. It logs these messages:
+pkgwarden writes one JSON object per line to stderr. Each line has `time`, `level`, and `msg`. A line logged while pkgwarden handles a request also has `request_id`, right after `msg`. It is the same ID that the response carries in `X-Request-Id`. To follow one request through these lines, see [Follow one request through the logs](observability.md#follow-one-request-through-the-logs).
+
+pkgwarden logs these messages:
 
 | `msg` | Level | Meaning | Other fields |
 | --- | --- | --- | --- |
-| `listening` | INFO | pkgwarden bound its port and started serving. `addr` is the bound address, so `-listen :0` shows the port the system picked. | `addr`, `cooldown`, `ghsa`, `openssf`, `heuristics` |
-| `blocked` | INFO | pkgwarden answered a request with 403. | `subject`, `reasons` |
-| `serving with warnings` | WARN | pkgwarden served a response whose verdict was `warn`. | `subject`, `reasons` |
-| `hiding every version` | INFO | pkgwarden served an empty RubyGems info file for a gem blocked at package level. | `subject`, `findings` |
+| `listening` | INFO | pkgwarden bound its ports and started serving. `addr` is the bound address, so `-listen :0` shows the port the system picked. `metrics_addr` is where `/metrics` is served, which is `addr` unless `-metrics-listen` is set. | `addr`, `metrics_addr`, `cooldown`, `ghsa`, `openssf`, `heuristics` |
+| `request` | INFO, DEBUG for `/healthz` and `/metrics` | pkgwarden finished a response. `path` has no query string. `bytes` counts the body pkgwarden sent. `decision` is the `X-Pkgwarden-Decision` header, left out when the response did not go through the policy. | `method`, `path`, `status`, `bytes`, `duration_ms`, `ecosystem`, `decision`, `user_agent`, `remote_addr` |
+| `upstream` | INFO | pkgwarden got a response, or an error, from a registry or advisory source. `path` has no query string. `content_length` is left out when upstream did not send one. `duration_ms` runs until the response headers arrived. No header value is logged. | `method`, `host`, `path`, `status`, `content_length`, `duration_ms`, or `err` instead of `status` |
+| `blocked` | INFO | pkgwarden answered a request with 403. | `ecosystem`, `package`, `version`, `stage`, `rules`, `reasons` |
+| `serving with warnings` | WARN | pkgwarden served a response whose verdict was `warn`. | `ecosystem`, `package`, `version`, `stage`, `rules`, `reasons` |
+| `hiding every version` | INFO | pkgwarden served an empty RubyGems info file for a gem blocked at package level. | `ecosystem`, `package`, `stage`, `rules`, `findings` |
+| `artifact relay interrupted` | WARN | Copying a package file to the client failed partway, such as when the client disconnected. | `ecosystem`, `package`, `version`, `bytes`, `err` |
 | `advisory dataset refresh failed` | ERROR | An OpenSSF download or parse failed. The previous index stays in use, and pkgwarden retries with backoff. | `source`, `err` |
+| `metadata cache hit` | DEBUG | pkgwarden answered a metadata fetch from its cache, with no upstream call. | `url` |
+| `joined in-flight fetch` | DEBUG | A metadata fetch shared the upstream call that another request started. That call's `upstream` line carries the other request's ID. | `url` |
+| `advisory cache hit` | DEBUG | pkgwarden answered an advisory lookup from its cache, with no upstream call. | `ecosystem`, `package` |
 | `pypi download count unavailable` | DEBUG | pypistats did not answer in time, or answered without a count. | `project`, `err` |
 | `exiting` | ERROR | pkgwarden stopped because of an error. | `err` |
 
-`reasons` holds the findings at the verdict's decision, as `<rule>: <reason>` joined with `; `. Unlike the 403 body, it is not shortened. `findings` holds the full finding objects.
+`version` is left out of `blocked` and `serving with warnings` when the verdict covers the whole package. `stage` is `metadata` or `artifact`, as in [Label values](observability.md#label-values). `rules` lists each rule behind the decision once. `reasons` holds the findings at the verdict's decision, as `<rule>: <reason>` joined with `; `. Unlike the 403 body, it is not shortened. `findings` holds the full finding objects.
 
 These lines were captured on 2026-11-07. The long ones are trimmed with `...`:
 
-	{"time":"2026-11-07T17:26:23.300353-05:00","level":"INFO","msg":"listening","addr":"127.0.0.1:18181","cooldown":"168h0m0s","ghsa":false,"openssf":false,"heuristics":true}
-	{"time":"2026-11-07T17:28:40.21862-05:00","level":"INFO","msg":"blocked","subject":"cargo/smallvec@1.6.0","reasons":"advisory: GHSA-43w2-9j62-hq99 (critical vulnerability, via osv): Buffer overflow in SmallVec::insert_many https://osv.dev/vulnerability/GHSA-43w2-9j62-hq99"}
-	{"time":"2026-11-07T17:26:42.420105-05:00","level":"WARN","msg":"serving with warnings","subject":"pypi/requests@2.31.0","reasons":"advisory: GHSA-9hjg-9r4m-mvj7 (medium vulnerability, via osv): Requests vulnerable to .netrc credentials leak via malicious URLs https://osv.dev/vulnerability/GHSA-9hjg-9r4m-mvj7; ..."}
-	{"time":"2026-11-07T17:30:03.121557-05:00","level":"INFO","msg":"hiding every version","subject":"rubygems/nokogirl","findings":[{"rule":"heuristic/typosquat","decision":"block","reason":"resembles popular package \"nokogiri\" (one edit away)"},...]}
+	{"time":"2026-11-07T18:36:28.12966-05:00","level":"INFO","msg":"listening","addr":"127.0.0.1:18181","metrics_addr":"127.0.0.1:18181","cooldown":"168h0m0s","ghsa":false,"openssf":false,"heuristics":true}
+	{"time":"2026-11-07T18:36:32.255631-05:00","level":"INFO","msg":"upstream","request_id":"f3b81df0468fbbea48d308745598b8ed","method":"GET","host":"crates.io","path":"/api/v1/crates/smallvec","status":200,"duration_ms":233.876}
+	{"time":"2026-11-07T18:36:32.456401-05:00","level":"INFO","msg":"blocked","request_id":"f3b81df0468fbbea48d308745598b8ed","ecosystem":"cargo","package":"smallvec","version":"1.6.0","stage":"artifact","rules":["advisory/vulnerability"],"reasons":"advisory/vulnerability: GHSA-43w2-9j62-hq99 (critical vulnerability, via osv): Buffer overflow in SmallVec::insert_many https://osv.dev/vulnerability/GHSA-43w2-9j62-hq99"}
+	{"time":"2026-11-07T18:36:32.456606-05:00","level":"INFO","msg":"request","request_id":"f3b81df0468fbbea48d308745598b8ed","method":"GET","path":"/cargo/api/v1/crates/smallvec/1.6.0/download","status":403,"bytes":244,"duration_ms":435.098,"ecosystem":"cargo","decision":"block","user_agent":"curl/8.7.1","remote_addr":"127.0.0.1:55999"}
+	{"time":"2026-11-07T18:36:34.113278-05:00","level":"WARN","msg":"serving with warnings","request_id":"7a03613358de0b64d235462c9cbbf1f3","ecosystem":"pypi","package":"requests","version":"2.31.0","stage":"artifact","rules":["advisory/vulnerability"],"reasons":"advisory/vulnerability: GHSA-9hjg-9r4m-mvj7 (medium vulnerability, via osv): Requests vulnerable to .netrc credentials leak via malicious URLs https:/..."}
+	{"time":"2026-11-07T18:36:34.761419-05:00","level":"INFO","msg":"hiding every version","request_id":"69a6fc7537a6c2da28e3936575013ffd","ecosystem":"rubygems","package":"nokogirl","stage":"metadata","rules":["heuristic/typosquat","heuristic/low-downloads","heuristic/score"],"findings":[{"rule":"heuristic/typosquat","decision":"block","reason":"resembles popular package \"nokogiri\" (one edit away)"},...]}
 
-pkgwarden does not log allowed requests, successful OpenSSF refreshes, or a clean shutdown. Every response with a `warn` verdict logs its own line. A package-level warning therefore appears once for the metadata document and once for each download.
+pkgwarden does not log successful OpenSSF refreshes or a clean shutdown. Every response with a `warn` verdict logs its own line. A package-level warning therefore appears once for the metadata document and once for each download.
+
+## Scrape it with Prometheus
+
+pkgwarden serves Prometheus metrics at `/metrics`. [Metrics and request tracing](observability.md) lists every metric with example queries.
+
+`/metrics` is as open as every other route, because pkgwarden has no authentication. To serve it on a port that package managers cannot reach, start pkgwarden with `-metrics-listen` and publish that port only to your monitoring network:
+
+	docker run -p 8080:8080 -p 127.0.0.1:9090:9090 pkgwarden -metrics-listen :9090
+
+Then add a scrape job to `prometheus.yml`:
+
+```yaml
+scrape_configs:
+  - job_name: pkgwarden
+    static_configs:
+      - targets: ["pkgwarden.internal:9090"]
+```
+
+Without `-metrics-listen`, scrape the main port, such as `pkgwarden.internal:8080`. Scrapes of `/metrics` log their `request` line at debug, so they do not fill the log at the default level.
 
 ## Check its health
 
-`GET /healthz` returns 200 and `ok`. It does not contact any upstream, so it shows only that the process is serving. The image has no shell or `curl`, so use your orchestrator's HTTP probe rather than a command inside the container.
+`GET /healthz` returns 200 and `ok`. It does not contact any upstream, so it shows only that the process is serving. To see whether upstreams and advisory sources answer, watch `pkgwarden_upstream_requests_total` instead. See [Example queries](observability.md#example-queries). The image has no shell or `curl`, so use your orchestrator's HTTP probe rather than a command inside the container.
 
 ## Stop it
 
@@ -131,7 +160,8 @@ pkgwarden stops on `SIGINT` or `SIGTERM`. It stops accepting connections, waits 
 
 ## Secure it
 
-- pkgwarden has no authentication. Anyone who can reach the port can install packages through it, read verdicts from `/api/v1/check`, and make it send requests to the public registries. Expose it only on a private network, or put an authenticating proxy in front of it.
+- pkgwarden has no authentication. Anyone who can reach the port can install packages through it, read verdicts from `/api/v1/check`, read `/metrics`, and make it send requests to the public registries. Expose it only on a private network, or put an authenticating proxy in front of it. `-metrics-listen` moves `/metrics` to its own port.
+- The logs name every package that clients request, with the client's address and user agent. Treat them as you treat an access log.
 - pkgwarden never forwards client credentials upstream. Each adapter copies only named headers, such as `Accept`, `Range`, and conditional headers. An `Authorization` header sent to pkgwarden stays there.
 - The GitHub token goes only to `api.github.com`. pkgwarden refuses a pagination link to any other host.
 - `pkgwarden -h` never prints a token. The help text names `$GITHUB_TOKEN` as the default of `-ghsa-token`.

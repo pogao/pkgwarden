@@ -1,6 +1,6 @@
 # HTTP API reference
 
-pkgwarden serves one HTTP listener. It mounts one adapter per ecosystem, a check endpoint, and a health endpoint. The top-level routes are defined in `internal/proxy/server.go`.
+pkgwarden serves one HTTP listener, or two with `-metrics-listen`. It mounts one adapter per ecosystem, a check endpoint, a health endpoint, and the metrics endpoint. The top-level routes are defined in `internal/proxy/server.go`, and `/metrics` is added in `cmd/pkgwarden/main.go`.
 
 ## Top-level routes
 
@@ -13,8 +13,9 @@ pkgwarden serves one HTTP listener. It mounts one adapter per ecosystem, a check
 | `/cargo/` | The Cargo sparse index and crate downloads. |
 | `/api/v1/check` | The verdict for a package or a release. |
 | `/healthz` | A liveness check. |
+| `/metrics` | Prometheus metrics. Served here unless `-metrics-listen` is set. |
 
-Any other path answers 404.
+Any other path answers 404. With `-metrics-listen`, the second listener serves only `/metrics` and answers 404 for every other path.
 
 ## `GET /api/v1/check`
 
@@ -57,17 +58,17 @@ This response was captured on 2026-11-07:
 	  "decision": "warn",
 	  "findings": [
 	    {
-	      "rule": "advisory",
+	      "rule": "advisory/vulnerability",
 	      "decision": "warn",
 	      "reason": "GHSA-9hjg-9r4m-mvj7 (medium vulnerability, via osv): Requests vulnerable to .netrc credentials leak via malicious URLs https://osv.dev/vulnerability/GHSA-9hjg-9r4m-mvj7"
 	    },
 	    {
-	      "rule": "advisory",
+	      "rule": "advisory/vulnerability",
 	      "decision": "warn",
 	      "reason": "GHSA-9wx4-h78v-vm56 (medium vulnerability, via osv): Requests `Session` object does not verify requests after making first request with verify=False https://osv.dev/vulnerability/GHSA-9wx4-h78v-vm56"
 	    },
 	    {
-	      "rule": "advisory",
+	      "rule": "advisory/vulnerability",
 	      "decision": "warn",
 	      "reason": "GHSA-gc5v-m9x4-r6x2 (medium vulnerability, via osv): Requests has Insecure Temp File Reuse in its extract_zipped_paths() utility function https://osv.dev/vulnerability/GHSA-gc5v-m9x4-r6x2"
 	    }
@@ -98,13 +99,14 @@ A failed advisory lookup is not an error. It is an `advisory-lookup` finding in 
 
 ### Rules
 
-These are the `Rule` constants in `internal/policy/policy.go`. There are 11. To count them, run `grep -c 'Rule = "' internal/policy/policy.go`.
+These are the `Rule` constants in `internal/policy/policy.go`. There are 12. To count them, run `grep -c 'Rule = "' internal/policy/policy.go`.
 
 | Rule | Decisions | Applies to | Meaning |
 | --- | --- | --- | --- |
 | `allowlist` | `allow` | Package | The package is on `-allow`. No other check ran. |
 | `cooldown` | `block` | Release | The release is younger than `-cooldown`, or its publish time is unknown. See [Cooldown](cooldown.md). |
-| `advisory` | `warn`, `block` | Release, or package for a package-wide advisory | An advisory covers the release. See [Advisories](advisories.md). |
+| `advisory/malicious` | `block` | Release, or package for a package-wide advisory | An advisory reports the release as malicious. See [Advisories](advisories.md). |
+| `advisory/vulnerability` | `warn`, `block` | Release, or package for a package-wide advisory | A vulnerability advisory covers the release. It blocks at `-block-severity` or above. See [The severity threshold](advisories.md#the-severity-threshold). |
 | `advisory-lookup` | `warn`, `block` | Package | An advisory source failed. `block` by default, `warn` with `-fail-open`. |
 | `heuristic/new-package` | `warn`, `block` | Package, restated on a release | The package is younger than `-new-package-age`. |
 | `heuristic/low-downloads` | `warn`, `block` | Package, restated on a release | Weekly downloads are below `-low-downloads`. |
@@ -120,7 +122,13 @@ These are the `Rule` constants in `internal/policy/policy.go`. There are 11. To 
 
 Returns status 200 with the body `ok` and a newline. It answers `GET` and `HEAD`. It does not contact any upstream or advisory source, so it reports only that the process is serving.
 
+## `GET /metrics`
+
+Returns every metric in the Prometheus exposition format. It answers `GET` and `HEAD`, and any other method gets 405. [Metrics and request tracing](observability.md#metric-reference) lists the metrics.
+
 ## Response headers
+
+Every response carries `X-Request-Id`, the ID of the request. pkgwarden keeps an `X-Request-Id` sent with the request when it is 1 to 64 characters, each a letter, a digit, `.`, `_`, or `-`. Otherwise it generates 32 lowercase hexadecimal digits. Every log line about the request carries the same ID as `request_id`. See [Follow one request through the logs](observability.md#follow-one-request-through-the-logs).
 
 pkgwarden adds these headers to every response that went through the policy. Those are the metadata documents and the files listed in [Ecosystem routes](#ecosystem-routes) as filtered or enforced. Responses that pkgwarden passes through unchanged carry neither header.
 
@@ -132,7 +140,7 @@ pkgwarden adds these headers to every response that went through the policy. Tho
 This header pair was captured on 2026-11-07 from a download of `requests-2.31.0-py3-none-any.whl`:
 
 	X-Pkgwarden-Decision: warn
-	X-Pkgwarden-Warning: advisory: GHSA-9hjg-9r4m-mvj7 (medium vulnerability, via osv): Requests vulnerable to .netrc credentials leak via malicious URLs https://osv.dev/vulnerability/GHSA-9hjg-9r4m-mvj7; advisory: GHSA-9wx4-h78v-vm56 (medium vulnerability, via osv): Requests `Session` object does not verify requests after making first request with verify=False https://osv.dev/vulnerability/GHSA-9wx4-h78v-vm56; advisory: GHSA-gc5v-m9x4-r6x2 (medium vulnerability, via osv): Requests has Insecure Temp File Reuse in its extract_zipped_paths() utility function https://osv.dev/vulnerability/GHSA-gc5v-m9x4-r6x2
+	X-Pkgwarden-Warning: advisory/vulnerability: GHSA-9hjg-9r4m-mvj7 (medium vulnerability, via osv): Requests vulnerable to .netrc credentials leak via malicious URLs https://osv.dev/vulnerability/GHSA-9hjg-9r4m-mvj7; advisory/vulnerability: GHSA-9wx4-h78v-vm56 (medium vulnerability, via osv): Requests `Session` object does not verify requests after making first request with verify=False https://osv.dev/vulnerability/GHSA-9wx4-h78v-vm56; advisory/vulnerability: GHSA-gc5v-m9x4-r6x2 (medium vulnerability, via osv): Requests has Insecure Temp File Reuse in its extract_zipped_paths() utility function https://osv.dev/vulnerability/GHSA-gc5v-m9x4-r6x2
 
 ## The 403 response
 
@@ -145,21 +153,21 @@ A blocked request gets status 403, `X-Pkgwarden-Decision: block`, and `X-Content
 
 The message has this form:
 
-	pkgwarden blocked <subject>: <rule>: <reason>; <rule>: <reason>
+	pkgwarden blocked <subject>: <rule>: <reason>; <rule>: <reason> (request <id>)
 
-The subject is `<ecosystem>/<name>` for a package-level block and `<ecosystem>/<name>@<version>` for a release. The message lists only the findings whose decision is `block`.
+The subject is `<ecosystem>/<name>` for a package-level block and `<ecosystem>/<name>@<version>` for a release. The message lists only the findings whose decision is `block`. It ends with the request ID, so whoever reads the logs can find the request. See [Follow one request through the logs](observability.md#follow-one-request-through-the-logs).
 
 pkgwarden keeps the message short, because the go command replaces a longer body with `[Truncated: too long.]`.
 
 - Each `<rule>: <reason>` part longer than 160 bytes is cut to 157 bytes and ends with `...`.
-- When the next part would take the message past 540 bytes, pkgwarden stops and appends `and <N> more, see /api/v1/check`. N counts the `block` findings not yet listed. It leaves out `warn` findings, which the message never lists.
+- When the next part would take the message past 540 bytes less the length of the ` (request <id>)` suffix, pkgwarden stops and appends `and <N> more, see /api/v1/check`. N counts the `block` findings not yet listed. It leaves out `warn` findings, which the message never lists.
 
 This body was captured on 2026-11-07:
 
 	$ curl -s http://127.0.0.1:18181/rubygems/gems/rack-2.2.3.gem
-	pkgwarden blocked rubygems/rack@2.2.3: advisory: GHSA-3h57-hmj3-gj3p (high vulnerability, via osv): Rack has possible DoS Vulnerability in Multipart MIME parsing https://osv.dev/vulnerability/GHSA...; advisory: GHSA-625h-95r8-8xpm (high vulnerability, via osv): Rack has an unsafe default in Rack::QueryParser allows params_limit bypass via semicolon-separat...; advisory: GHSA-65f5-mfpf-vfhj (high vulnerability, via osv): Denial of service via header parsing in Rack https://osv.dev/vulnerability/GHSA-65f5-mfpf-vfhj; and 12 more, see /api/v1/check
+	pkgwarden blocked rubygems/rack@2.2.3: advisory/vulnerability: GHSA-3h57-hmj3-gj3p (high vulnerability, via osv): Rack has possible DoS Vulnerability in Multipart MIME parsing https://osv.dev/vuln...; advisory/vulnerability: GHSA-625h-95r8-8xpm (high vulnerability, via osv): Rack has an unsafe default in Rack::QueryParser allows params_limit bypass via sem...; and 13 more, see /api/v1/check (request 997f78977a78ee1429e39fcd9e0477f7)
 
-The full verdict for that release had 32 findings, 15 of them `block`. The message lists 3, so N is 12.
+The full verdict for that release had 32 findings, 15 of them `block`. The message lists 2, so N is 13.
 
 ## Ecosystem routes
 

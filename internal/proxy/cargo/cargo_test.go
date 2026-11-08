@@ -19,6 +19,7 @@ import (
 	"github.com/pogao/pkgwarden/internal/ecosystem"
 	"github.com/pogao/pkgwarden/internal/policy"
 	"github.com/pogao/pkgwarden/internal/proxy"
+	"github.com/pogao/pkgwarden/internal/telemetry/telemetrytest"
 )
 
 const day = 24 * time.Hour
@@ -206,7 +207,16 @@ func TestDownloads(t *testing.T) {
 		{"unknown crate", "/cargo/api/v1/crates/no_such_crate/1.0.0/download", http.StatusNotFound, nil, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			before := telemetrytest.Value(t, "pkgwarden_artifacts_served_total", map[string]string{"ecosystem": "cargo"})
 			resp := get(t, base+tc.path)
+			served := telemetrytest.Value(t, "pkgwarden_artifacts_served_total", map[string]string{"ecosystem": "cargo"}) - before
+			want := 0.0
+			if tc.status == http.StatusOK {
+				want = 1
+			}
+			if served != want {
+				t.Errorf("artifacts_served_total grew by %v, want %v", served, want)
+			}
 			if resp.status != tc.status {
 				t.Fatalf("status %d, want %d: %s", resp.status, tc.status, resp.body)
 			}

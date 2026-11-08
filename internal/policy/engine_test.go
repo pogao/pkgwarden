@@ -124,29 +124,29 @@ func TestAdvisories(t *testing.T) {
 		mention   string
 	}{
 		{"critical blocks at high", []advisory.Advisory{vuln(advisory.SeverityCritical)}, advisory.SeverityHigh,
-			map[string]Decision{"1.0.0": Block, "1.1.0": Allow}, "GHSA-aaaa-bbbb-cccc (critical vulnerability, via ghsa)"},
+			map[string]Decision{"1.0.0": Block, "1.1.0": Allow}, "advisory/vulnerability: GHSA-aaaa-bbbb-cccc (critical vulnerability, via ghsa)"},
 		{"high blocks at high", []advisory.Advisory{vuln(advisory.SeverityHigh)}, advisory.SeverityHigh,
-			map[string]Decision{"1.0.0": Block, "1.1.0": Allow}, "GHSA-aaaa-bbbb-cccc (high vulnerability, via ghsa)"},
+			map[string]Decision{"1.0.0": Block, "1.1.0": Allow}, "advisory/vulnerability: GHSA-aaaa-bbbb-cccc (high vulnerability, via ghsa)"},
 		{"medium warns at high", []advisory.Advisory{vuln(advisory.SeverityMedium)}, advisory.SeverityHigh,
-			map[string]Decision{"1.0.0": Warn, "1.1.0": Allow}, "GHSA-aaaa-bbbb-cccc (medium vulnerability, via ghsa)"},
+			map[string]Decision{"1.0.0": Warn, "1.1.0": Allow}, "advisory/vulnerability: GHSA-aaaa-bbbb-cccc (medium vulnerability, via ghsa)"},
 		{"low warns at high", []advisory.Advisory{vuln(advisory.SeverityLow)}, advisory.SeverityHigh,
-			map[string]Decision{"1.0.0": Warn, "1.1.0": Allow}, "GHSA-aaaa-bbbb-cccc (low vulnerability, via ghsa)"},
+			map[string]Decision{"1.0.0": Warn, "1.1.0": Allow}, "advisory/vulnerability: GHSA-aaaa-bbbb-cccc (low vulnerability, via ghsa)"},
 		{"unrated warns at high", []advisory.Advisory{vuln(advisory.SeverityUnknown)}, advisory.SeverityHigh,
-			map[string]Decision{"1.0.0": Warn, "1.1.0": Allow}, "GHSA-aaaa-bbbb-cccc (unrated vulnerability, via ghsa)"},
+			map[string]Decision{"1.0.0": Warn, "1.1.0": Allow}, "advisory/vulnerability: GHSA-aaaa-bbbb-cccc (unrated vulnerability, via ghsa)"},
 		{"low blocks at low", []advisory.Advisory{vuln(advisory.SeverityLow)}, advisory.SeverityLow,
-			map[string]Decision{"1.0.0": Block, "1.1.0": Allow}, "GHSA-aaaa-bbbb-cccc (low vulnerability, via ghsa)"},
+			map[string]Decision{"1.0.0": Block, "1.1.0": Allow}, "advisory/vulnerability: GHSA-aaaa-bbbb-cccc (low vulnerability, via ghsa)"},
 		{"unrated warns at low", []advisory.Advisory{vuln(advisory.SeverityUnknown)}, advisory.SeverityLow,
-			map[string]Decision{"1.0.0": Warn, "1.1.0": Allow}, "GHSA-aaaa-bbbb-cccc (unrated vulnerability, via ghsa)"},
+			map[string]Decision{"1.0.0": Warn, "1.1.0": Allow}, "advisory/vulnerability: GHSA-aaaa-bbbb-cccc (unrated vulnerability, via ghsa)"},
 		{"high warns at critical", []advisory.Advisory{vuln(advisory.SeverityHigh)}, advisory.SeverityCritical,
-			map[string]Decision{"1.0.0": Warn, "1.1.0": Allow}, "GHSA-aaaa-bbbb-cccc (high vulnerability, via ghsa)"},
+			map[string]Decision{"1.0.0": Warn, "1.1.0": Allow}, "advisory/vulnerability: GHSA-aaaa-bbbb-cccc (high vulnerability, via ghsa)"},
 		{"critical warns when no threshold is set", []advisory.Advisory{vuln(advisory.SeverityCritical)}, advisory.SeverityUnknown,
-			map[string]Decision{"1.0.0": Warn, "1.1.0": Allow}, "GHSA-aaaa-bbbb-cccc (critical vulnerability, via ghsa)"},
+			map[string]Decision{"1.0.0": Warn, "1.1.0": Allow}, "advisory/vulnerability: GHSA-aaaa-bbbb-cccc (critical vulnerability, via ghsa)"},
 		{"unrated malicious blocks at high", []advisory.Advisory{malicious}, advisory.SeverityHigh,
-			map[string]Decision{"1.0.0": Allow, "1.1.0": Block}, "MAL-2026-1 (malicious, via openssf)"},
+			map[string]Decision{"1.0.0": Allow, "1.1.0": Block}, "advisory/malicious: MAL-2026-1 (malicious, via openssf)"},
 		{"malicious blocks when no threshold is set", []advisory.Advisory{malicious}, advisory.SeverityUnknown,
-			map[string]Decision{"1.0.0": Allow, "1.1.0": Block}, "MAL-2026-1 (malicious, via openssf)"},
+			map[string]Decision{"1.0.0": Allow, "1.1.0": Block}, "advisory/malicious: MAL-2026-1 (malicious, via openssf)"},
 		{"advisory without versions or ranges blocks every release", []advisory.Advisory{everything}, advisory.SeverityUnknown,
-			map[string]Decision{"1.0.0": Block, "1.1.0": Block}, "MAL-2026-2"},
+			map[string]Decision{"1.0.0": Block, "1.1.0": Block}, "advisory/malicious: MAL-2026-2"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -155,7 +155,7 @@ func TestAdvisories(t *testing.T) {
 			for version, want := range tt.want {
 				v := assertDecision(t, a, version, want)
 				if want != Allow {
-					assertMentions(t, v, "advisory: "+tt.mention)
+					assertMentions(t, v, tt.mention)
 				}
 			}
 		})
