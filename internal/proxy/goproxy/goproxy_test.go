@@ -35,9 +35,10 @@ var (
 )
 
 const (
-	fooBar   = "example.com/Foo/bar"
-	pseudoV  = "v0.0.0-20261001000000-abcdefabcdef"
-	pseudoV2 = "v0.0.0-20261105000000-123456123456"
+	fooBar             = "example.com/Foo/bar"
+	pseudoV            = "v0.0.0-20261001000000-abcdefabcdef"
+	pseudoV2           = "v0.0.0-20261105000000-123456123456"
+	unpublishedPseudoV = "v0.0.0-20261106000000-000000000000"
 )
 
 type fakeModule struct {
@@ -304,6 +305,14 @@ func TestMissingInfoIsAnUnknownPublishTime(t *testing.T) {
 	}
 	if status, body := get(t, e.proxy.URL+"/go/example.com/gap/@v/v1.0.0.zip"); status != http.StatusOK {
 		t.Errorf("v1.0.0.zip: status %d body %q, want 200", status, body)
+	}
+}
+
+func TestUnlistedVersionWithoutInfoIsUnknown(t *testing.T) {
+	e := newEnv(t, nil)
+	for _, v := range []string{"v1.3.0", unpublishedPseudoV} {
+		status, body := get(t, e.proxy.URL+"/go/example.com/gap/@v/"+v+".zip")
+		assertBlocked(t, status, body, "go/example.com/gap@"+v, "unknown-release", "not published upstream")
 	}
 }
 
