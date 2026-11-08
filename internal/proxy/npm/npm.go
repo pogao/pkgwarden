@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"path"
 	"strings"
 
 	"github.com/pogao/pkgwarden/internal/ecosystem"
@@ -140,10 +141,19 @@ func parseRoute(p string) (route, bool) {
 	return route{}, false
 }
 
-// version extracts the version from a tarball file name such as
-// widget-1.2.3.tgz. A name that does not fit yields a string no release
-// matches, so the policy blocks it as unknown.
-func (rt route) version() string {
+// version returns the version whose dist.tarball has the requested file
+// name. Old npm clients named the file after the unnormalized version, so
+// express-3.0.0rc3.tgz belongs to 3.0.0-rc3. Failing that, it extracts the
+// version from a file name such as widget-1.2.3.tgz. A name that does not
+// fit yields a string no release matches, so the policy blocks it as
+// unknown.
+func (rt route) version(p *packument) string {
+	for v, m := range p.versions {
+		var tarball string
+		if json.Unmarshal(m.dist["tarball"], &tarball) == nil && path.Base(tarball) == rt.file {
+			return v
+		}
+	}
 	unscoped := rt.name[strings.LastIndex(rt.name, "/")+1:]
 	v, _ := strings.CutPrefix(strings.TrimSuffix(rt.file, ".tgz"), unscoped+"-")
 	return v
@@ -264,12 +274,12 @@ func (r *Registry) serveDistTags(w http.ResponseWriter, req *http.Request, name 
 
 func (r *Registry) serveTarball(w http.ResponseWriter, req *http.Request, rt route) {
 	ctx := req.Context()
-	_, pkg, err := r.load(ctx, rt.name)
+	p, pkg, err := r.load(ctx, rt.name)
 	if err != nil {
 		proxy.WriteError(w, err)
 		return
 	}
-	s := proxy.Subject{Ecosystem: ecosystem.Npm, Name: rt.name, Version: rt.version()}
+	s := proxy.Subject{Ecosystem: ecosystem.Npm, Name: rt.name, Version: rt.version(p)}
 	a := r.o.Engine.Assess(ctx, pkg)
 	if !proxy.Enforce(ctx, w, proxy.JSON, proxy.StageArtifact, s, a.Release(s.Version)) {
 		return
