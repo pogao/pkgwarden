@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"github.com/pogao/pkgwarden/internal/ecosystem"
 	"github.com/pogao/pkgwarden/internal/policy"
 	"github.com/pogao/pkgwarden/internal/proxy"
+	"github.com/pogao/pkgwarden/internal/proxy/proxytest"
 	"github.com/pogao/pkgwarden/internal/telemetry/telemetrytest"
 )
 
@@ -29,6 +31,7 @@ var (
 
 	wheelPath     = "/files/packages/10/e3/a7f8eea80a9fa8358c1cd89ef489bc03675e69e54ed2982cd6f2a28d8295/demo_pkg-1.0.0-py3-none-any.whl"
 	wheelBytes    = []byte("PK\x03\x04\x14\x00demo_pkg-1.0.0 wheel\x00\xff")
+	sdistPath     = "/files/packages/71/dc/2a1e4e5c8f0e0e3d4b8e9c7f9e5b2a1b6c4f3e2d1c0b9a8f7e6d5c4b3a29/demo_pkg-1.0.0.tar.gz"
 	metadataBytes = []byte("Metadata-Version: 2.1\nName: demo-pkg\nVersion: 1.0.0\n")
 	rootIndex     = "<!DOCTYPE html>\n<html><body><a href=\"/simple/demo-pkg/\">demo-pkg</a></body></html>\n"
 )
@@ -42,8 +45,9 @@ func (s advisories) Lookup(_ context.Context, _ ecosystem.Ecosystem, name string
 }
 
 // setup starts a fake PyPI and a proxy server with the registry mounted at
-// /pypi, and returns the registry and the proxy's URL.
-func setup(t *testing.T, src advisories, tweak func(*Options)) (*Registry, string) {
+// /pypi, and returns the registry and the proxy's URL. tweak may change the
+// options and add routes to the fake PyPI.
+func setup(t *testing.T, src advisories, tweak func(*Options, *http.ServeMux)) (*Registry, string) {
 	t.Helper()
 	fixture, err := os.ReadFile("testdata/demo-pkg.json")
 	if err != nil {
@@ -79,7 +83,7 @@ func setup(t *testing.T, src advisories, tweak func(*Options)) (*Registry, strin
 		HTTP:   proxy.NewUpstream(upstream.Client(), "pkgwarden-test", time.Minute),
 	}
 	if tweak != nil {
-		tweak(&o)
+		tweak(&o, mux)
 	}
 	reg := New(o)
 	srv := httptest.NewServer(proxy.NewServer(o.Engine, reg))
@@ -289,6 +293,53 @@ func TestFiles(t *testing.T) {
 	}
 }
 
+func TestHeadOnAFileSkipsTheDownload(t *testing.T) {
+	file := proxytest.NewFile()
+	reg, _ := setup(t, nil, func(_ *Options, upstream *http.ServeMux) { upstream.Handle("GET "+sdistPath, file) })
+	// The registry counts a file after its last byte has gone out, so the
+	// metrics are read once srv.Close has waited for every handler.
+	srv := httptest.NewServer(reg)
+	t.Cleanup(srv.Close)
+	labels := map[string]string{"ecosystem": "pypi"}
+	served := telemetrytest.Value(t, "pkgwarden_artifacts_served_total", labels)
+	sent := telemetrytest.Value(t, "pkgwarden_artifact_bytes_total", labels)
+	head := func(path string) *http.Response {
+		t.Helper()
+		resp, err := http.Head(srv.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp
+	}
+
+	allowed := head("/files/demo-pkg/1.0.0/demo_pkg-1.0.0.tar.gz")
+	if cl := allowed.Header.Get("Content-Length"); allowed.StatusCode != http.StatusOK || cl != strconv.Itoa(file.Size) {
+		t.Errorf("HEAD: status %d Content-Length %q, want 200 and %d", allowed.StatusCode, cl, file.Size)
+	}
+	if n := file.Written(t); n >= file.Size/2 {
+		t.Errorf("upstream sent %d of %d bytes for a HEAD, want the transfer cut short", n, file.Size)
+	}
+	if blocked := head("/files/demo-pkg/1.1.0/demo_pkg-1.1.0-py3-none-any.whl"); blocked.StatusCode != http.StatusForbidden {
+		t.Errorf("HEAD on a release inside the cooldown: status %d, want 403", blocked.StatusCode)
+	}
+	resp := get(t, srv.URL+"/files/demo-pkg/1.0.0/demo_pkg-1.0.0.tar.gz", "")
+	if resp.status != http.StatusOK || len(resp.body) != file.Size {
+		t.Errorf("GET: status %d with %d bytes, want 200 with %d", resp.status, len(resp.body), file.Size)
+	}
+	if n := file.Written(t); n != file.Size {
+		t.Errorf("upstream sent %d of %d bytes for a GET", n, file.Size)
+	}
+	srv.Close()
+
+	if d := telemetrytest.Value(t, "pkgwarden_artifacts_served_total", labels) - served; d != 1 {
+		t.Errorf("artifacts_served_total grew by %v over a HEAD and a GET, want 1", d)
+	}
+	if d := telemetrytest.Value(t, "pkgwarden_artifact_bytes_total", labels) - sent; d != float64(file.Size) {
+		t.Errorf("artifact_bytes_total grew by %.0f over a HEAD and a GET, want %d", d, file.Size)
+	}
+}
+
 func TestPackageWideAdvisoryBlocks(t *testing.T) {
 	src := advisories{"demo-pkg": {{ID: "MAL-2026-0001", Source: "openssf", Kind: advisory.Malicious, Summary: "Malicious code in demo-pkg", Ecosystem: ecosystem.PyPI}}}
 	_, base := setup(t, src, nil)
@@ -339,7 +390,7 @@ func TestPackage(t *testing.T) {
 }
 
 func TestPackageWithoutDownloadStats(t *testing.T) {
-	reg, _ := setup(t, nil, func(o *Options) { o.Stats += "/missing" })
+	reg, _ := setup(t, nil, func(o *Options, _ *http.ServeMux) { o.Stats += "/missing" })
 	pkg, err := reg.Package(context.Background(), "demo-pkg")
 	if err != nil {
 		t.Fatal(err)
@@ -363,7 +414,7 @@ func TestPackageWhenDownloadStatsHang(t *testing.T) {
 	}))
 	t.Cleanup(hung.Close)
 	t.Cleanup(func() { close(release) })
-	reg, _ := setup(t, nil, func(o *Options) {
+	reg, _ := setup(t, nil, func(o *Options, _ *http.ServeMux) {
 		o.Stats = hung.URL
 		api := o.PyPI
 		gated := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -339,6 +339,26 @@ func TestUnroutedPathsUnderFilteredPrefixes(t *testing.T) {
 	}
 }
 
+func TestHeadOnAGemCountsNothing(t *testing.T) {
+	srv := newProxy(t, map[string]fakeGem{"nokogiri": nokogiri(t)}, nil)
+	labels := map[string]string{"ecosystem": "rubygems"}
+	before := telemetrytest.Value(t, "pkgwarden_artifacts_served_total", labels)
+
+	allowed := get(t, "HEAD", srv.URL+"/rubygems/gems/nokogiri-1.15.0.gem", nil)
+	blocked := get(t, "HEAD", srv.URL+"/rubygems/gems/nokogiri-1.16.0.gem", nil)
+	srv.Close()
+
+	if want := strconv.Itoa(len(artifactBytes("nokogiri-1.15.0.gem"))); allowed.status != http.StatusOK || allowed.header.Get("Content-Length") != want {
+		t.Errorf("HEAD: status %d Content-Length %q, want 200 and %s", allowed.status, allowed.header.Get("Content-Length"), want)
+	}
+	if blocked.status != http.StatusForbidden {
+		t.Errorf("HEAD on a release inside the cooldown: status %d, want 403", blocked.status)
+	}
+	if d := telemetrytest.Value(t, "pkgwarden_artifacts_served_total", labels) - before; d != 0 {
+		t.Errorf("artifacts_served_total grew by %v over two HEADs, want 0", d)
+	}
+}
+
 func TestGemFileNames(t *testing.T) {
 	gem := func(age time.Duration, versions ...fakeVersion) fakeGem {
 		for i := range versions {
