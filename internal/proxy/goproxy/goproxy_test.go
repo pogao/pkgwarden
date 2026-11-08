@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/mod/module"
+
 	"github.com/pogao/pkgwarden/internal/advisory"
 	"github.com/pogao/pkgwarden/internal/ecosystem"
 	"github.com/pogao/pkgwarden/internal/policy"
@@ -61,6 +63,7 @@ var modules = map[string]fakeModule{
 		listed: []string{"v0.9.0", "v1.0.0-RC.1", "v1.0.0", "v1.1.0", "v1.2.0-rc.1"},
 		times: map[string]time.Time{
 			"v0.9.0": ancient, "v1.0.0-RC.1": old, "v1.0.0": old, "v1.1.0": young, "v1.2.0-rc.1": young, pseudoV: old,
+			"v2.0.0+incompatible": old,
 		},
 		latest: "v1.2.0-rc.1",
 	},
@@ -91,10 +94,11 @@ func infoJSON(v string, t time.Time) string {
 
 func zipBytes(path string) []byte { return []byte("PK\x03\x04 module zip " + path) }
 
-func fakeProxy(t *testing.T, infoHits *atomic.Int64) *httptest.Server {
+func fakeProxy(t *testing.T, requests, infoHits *atomic.Int64) *httptest.Server {
 	t.Helper()
 	versionEscapes := strings.NewReplacer("!r!c", "RC")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
 		p := strings.TrimPrefix(r.URL.Path, "/")
 		if strings.HasPrefix(p, "sumdb/") {
 			fmt.Fprintf(w, "sumdb %s", p)
@@ -131,6 +135,10 @@ func fakeProxy(t *testing.T, infoHits *atomic.Int64) *httptest.Server {
 			return
 		}
 		v := versionEscapes.Replace(file[:dot])
+		// Like proxy.golang.org, resolve a query such as v1.0 for .info only.
+		if c := module.CanonicalVersion(v); c != "" && file[dot:] == ".info" {
+			v = c
+		}
 		tm, ok := m.times[v]
 		if !ok {
 			notFound()
@@ -162,21 +170,22 @@ func fakeProxy(t *testing.T, infoHits *atomic.Int64) *httptest.Server {
 type env struct {
 	proxy    *httptest.Server
 	reg      *goproxy.Registry
+	requests *atomic.Int64
 	infoHits *atomic.Int64
 }
 
 func newEnv(t *testing.T, src fakeSource) env {
 	t.Helper()
 	engine := policy.New(policy.Config{Cooldown: 7 * 24 * time.Hour}, src)
-	infoHits := new(atomic.Int64)
+	requests, infoHits := new(atomic.Int64), new(atomic.Int64)
 	reg := goproxy.New(goproxy.Options{
-		Upstream: fakeProxy(t, infoHits).URL,
+		Upstream: fakeProxy(t, requests, infoHits).URL,
 		Engine:   engine,
 		HTTP:     proxy.NewUpstream(http.DefaultClient, "pkgwarden-test", time.Minute),
 	})
 	srv := httptest.NewServer(proxy.NewServer(engine, reg))
 	t.Cleanup(srv.Close)
-	return env{proxy: srv, reg: reg, infoHits: infoHits}
+	return env{proxy: srv, reg: reg, requests: requests, infoHits: infoHits}
 }
 
 func get(t *testing.T, url string) (int, string) {
@@ -246,6 +255,7 @@ func TestZip(t *testing.T) {
 		"example.com/!foo/bar/@v/v1.0.0.zip",
 		"example.com/!foo/bar/@v/v1.0.0-!r!c.1.zip",
 		"example.com/!foo/bar/@v/" + pseudoV + ".zip",
+		"example.com/!foo/bar/@v/v2.0.0+incompatible.zip",
 		"example.com/pseudo/old/@v/" + pseudoV + ".zip",
 	}
 	for _, p := range allowed {
@@ -266,10 +276,20 @@ func TestZip(t *testing.T) {
 		"example.com/!foo/bar/@v/master.zip",
 		"example.com/Foo/bar/@v/v1.0.0.zip",
 		"example.com/!foo/bar/@v/v1.0.0-RC.1.zip",
+		"example.com/!foo/bar/@v/v1.0.zip",
+		"example.com/!foo/bar/@v/v1.zip",
 	} {
+		before := e.requests.Load()
 		if status, body := get(t, e.proxy.URL+"/go/"+p); status != http.StatusBadRequest {
 			t.Errorf("%s: status %d body %q, want 400", p, status, body)
 		}
+		if n := e.requests.Load() - before; n != 0 {
+			t.Errorf("%s: sent %d upstream requests, want 0", p, n)
+		}
+	}
+
+	if status, body := get(t, e.proxy.URL+"/go/example.com/!foo/bar/@v/v1.0.info"); status != http.StatusOK || body != infoJSON("v1.0.0", old) {
+		t.Errorf("v1.0.info: status %d body %q, want the upstream .info of v1.0.0", status, body)
 	}
 }
 
