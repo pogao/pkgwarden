@@ -400,6 +400,12 @@ func TestNothingAllowedBlocksWithLatestReasons(t *testing.T) {
 	assertBlocked(t, resp, body, "npm/@acme/widget@1.1.0", "cooldown")
 }
 
+func TestNothingAllowedWithoutLatestBlocksWithNewestReasons(t *testing.T) {
+	e := newEnv(t, 365*24*time.Hour, nil)
+	resp, body := get(t, e.proxy.URL+"/npm/x")
+	assertBlocked(t, resp, body, "npm/x@1.1.0", "cooldown")
+}
+
 func TestPackage(t *testing.T) {
 	e := newEnv(t, week, nil)
 	pkg, err := e.reg.Package(context.Background(), "@acme/widget")
