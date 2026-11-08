@@ -93,18 +93,26 @@ func firstPublished(pkg *Package) time.Time {
 }
 
 // releaseSignals walks releases in publish order. Releases without a publish
-// time cannot be placed in that order and get no release signals.
+// time cannot be placed in that order and get no release signals, but their
+// publishers count as earlier publishers of every release that has one.
 func releaseSignals(releases []Release) map[string][]signal {
+	earlier := make(map[string]bool)
+	remember := func(r Release) {
+		for _, p := range r.Publishers {
+			earlier[strings.ToLower(p)] = true
+		}
+	}
 	var ordered []Release
 	for _, r := range releases {
-		if !r.Published.IsZero() {
+		if r.Published.IsZero() {
+			remember(r)
+		} else {
 			ordered = append(ordered, r)
 		}
 	}
 	slices.SortStableFunc(ordered, func(a, b Release) int { return a.Published.Compare(b.Published) })
 
 	out := make(map[string][]signal)
-	earlier := make(map[string]bool)
 	for i, r := range ordered {
 		if newcomers := newPublishers(r.Publishers, earlier); len(newcomers) > 0 {
 			out[r.Version] = append(out[r.Version], signal{RuleMaintainerChange, weightMaintainerChange,
@@ -120,22 +128,22 @@ func releaseSignals(releases []Release) map[string][]signal {
 					fmt.Sprintf("runs install scripts, which the previous release %s did not", ordered[i-1].Version)})
 			}
 		}
-		for _, p := range r.Publishers {
-			earlier[strings.ToLower(p)] = true
-		}
+		remember(r)
 	}
 	return out
 }
 
-// newPublishers returns the accounts in publishers absent from earlier. With
-// no earlier publishers known there is nothing to compare against.
+// newPublishers returns the accounts in publishers absent from earlier, each
+// once. With no earlier publishers known there is nothing to compare against.
 func newPublishers(publishers []string, earlier map[string]bool) []string {
 	if len(earlier) == 0 {
 		return nil
 	}
 	var out []string
+	named := make(map[string]bool)
 	for _, p := range publishers {
-		if !earlier[strings.ToLower(p)] && !slices.Contains(out, p) {
+		if k := strings.ToLower(p); !earlier[k] && !named[k] {
+			named[k] = true
 			out = append(out, p)
 		}
 	}

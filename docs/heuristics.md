@@ -27,7 +27,7 @@ These are the exact reason texts:
 | `heuristic/install-scripts` | `first release runs install scripts`, or `runs install scripts, which the previous release <version> did not` |
 | `heuristic/score` | `<package or release> scores <total> (<signal> <weight> + ...), reaching the <warn or block> threshold <threshold>` |
 
-The release signals compare each release with the releases published before it. pkgwarden orders releases by publish time, not by version number. A release without a publish time gets no release signals. The first release in that order can never trigger `maintainer-change`, because there is no earlier publisher to compare against.
+The release signals compare each release with the releases published before it. pkgwarden orders releases by publish time, not by version number. A release without a publish time gets no release signals. Its publishers still count as earlier publishers of every release that has a publish time. The first release in that order is compared only with those publishers, so without them it can never trigger `maintainer-change`.
 
 ## What data each ecosystem provides
 
