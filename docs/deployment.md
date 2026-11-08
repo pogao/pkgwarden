@@ -9,6 +9,10 @@ Build the image from the repository root, then run it:
 	docker build -t pkgwarden .
 	docker run -p 8080:8080 pkgwarden
 
+To label the image with a version, pass the `VERSION` build argument. pkgwarden reports it in the `version` label of `pkgwarden_build_info`. Without it, the label is `(devel)`, because the build context leaves out `.git`:
+
+	docker build --build-arg VERSION="$(git describe --tags --always --dirty)" -t pkgwarden .
+
 The `Dockerfile` builds a static binary with `golang:1.27-alpine` and `CGO_ENABLED=0`, then copies it into `gcr.io/distroless/static-debian12:nonroot`. The container runs as the `nonroot` user, listens on port 8080, and has `/pkgwarden` as its entrypoint. The image has no shell.
 
 To pass flags, put them after the image name:
