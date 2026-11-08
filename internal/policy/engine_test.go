@@ -100,11 +100,17 @@ func TestCooldown(t *testing.T) {
 			{Version: "1.0.0", Published: daysAgo(30)},
 			{Version: "1.1.0", Published: daysAgo(2)},
 			{Version: "1.2.0"},
+			{Version: "1.3.0", Published: testNow.Add(3 * time.Hour)},
 		},
 	})
 	assertDecision(t, a, "1.0.0", Allow)
 	assertMentions(t, assertDecision(t, a, "1.1.0", Block), "cooldown: published 2d ago")
 	assertMentions(t, assertDecision(t, a, "1.2.0", Block), "cooldown: publish time unknown")
+	future := assertDecision(t, a, "1.3.0", Block)
+	assertMentions(t, future, "cooldown: published 0s ago, inside the 7d cooldown")
+	if text := shownText(future); strings.Contains(text, "-") {
+		t.Errorf("reasons %q show a negative age", text)
+	}
 }
 
 func TestAdvisories(t *testing.T) {
