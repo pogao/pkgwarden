@@ -67,8 +67,17 @@ func New(o Options) *Registry {
 	}
 	r.mux.HandleFunc("GET /info/{name}", r.serveInfo)
 	r.mux.HandleFunc("GET /gems/{file}", r.serveArtifact(".gem", true))
+	r.mux.HandleFunc("GET /downloads/{file}", r.serveArtifact(".gem", true))
 	r.mux.HandleFunc("GET /quick/Marshal.4.8/{file}", r.serveArtifact(".gemspec.rz", false))
+	// rubygems.org answers spellings these routes miss, such as /info/<gem>/,
+	// with unfiltered content, so the rest of each filtered prefix gets 404.
 	r.mux.HandleFunc("GET /", func(w http.ResponseWriter, req *http.Request) {
+		for _, prefix := range []string{"/info/", "/gems/", "/downloads/", "/quick/"} {
+			if strings.HasPrefix(req.URL.Path, prefix) {
+				http.NotFound(w, req)
+				return
+			}
+		}
 		r.relay(w, req, r.upstream+req.URL.EscapedPath())
 	})
 	return r

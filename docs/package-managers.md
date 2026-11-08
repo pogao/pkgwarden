@@ -147,7 +147,8 @@ For the gem command, replace the default source:
 
 - The compact index file at `/rubygems/info/<gem>` loses the lines of blocked versions. Bundler and `gem install` resolve against it.
 - A gem blocked at package level gets an info file that holds only `---`, so the client sees a gem with no versions. [How pkgwarden works](how-it-works.md#a-fully-blocked-gem-gets-an-empty-info-file) explains why it is not a 403.
-- Downloads of `.gem` files and of `quick/Marshal.4.8/*.gemspec.rz` files are checked against their version.
+- Downloads of `.gem` files and of `quick/Marshal.4.8/*.gemspec.rz` files are checked against their version. A `.gem` file is checked at both of its rubygems.org URLs, `/gems/<file>.gem` and `/downloads/<file>.gem`.
+- A trailing slash or an extra segment on one of these paths, such as `/info/<gem>/`, gets 404. rubygems.org answers `/info/<gem>/` with the unfiltered file.
 - Every other path passes through, including `/versions`, `/names`, and the legacy indexes such as `specs.4.8.gz`.
 
 The legacy indexes are not filtered. `gem fetch` and `gem list -r` read them, so they can pick a blocked version and then fail on its 403. Bundler and `gem install` use the filtered compact index.
