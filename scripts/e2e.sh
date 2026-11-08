@@ -151,6 +151,9 @@ expect_ok "bundle install rack" client ruby:3.3-slim sh -c "$(bundle_project '"r
 expect_refused "bundle install rack 2.2.3 (vulnerable)" "Could not find|403|pkgwarden" \
 	client ruby:3.3-slim sh -c "$(bundle_project '"rack", "= 2.2.3"')"
 expect_403 "gem rack 2.2.3 names the advisory" /rubygems/gems/rack-2.2.3.gem "vulnerability|GHSA|CVE"
+expect_403 "gem rack 2.2.3 via /downloads/ names the advisory" /rubygems/downloads/rack-2.2.3.gem "vulnerability|GHSA|CVE"
+expect_ok "info/rack/ with a trailing slash gets 404" sh -c \
+	"curl -s -o /dev/null -w '%{http_code}\n' '$host/rubygems/info/rack/' | tee /dev/stderr | grep -x 404 >/dev/null"
 
 echo "== check API"
 curl -s "$host/api/v1/check?ecosystem=npm&name=lodash&version=4.17.20" | head -c 600; echo
