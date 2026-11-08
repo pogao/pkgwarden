@@ -22,7 +22,7 @@ Every pkgwarden series starts with `pkgwarden_`. No metric has a package name or
 | `pkgwarden_artifact_bytes_total` | counter | `ecosystem` | Bytes of those package files. |
 | `pkgwarden_upstream_requests_total` | counter | `host`, `code` | Outbound requests to registries and advisory sources. |
 | `pkgwarden_upstream_request_duration_seconds` | histogram | `host` | Time from sending an outbound request until its response headers arrived. |
-| `pkgwarden_cache_requests_total` | counter | `cache`, `result` | Lookups in the metadata cache and the advisory cache. |
+| `pkgwarden_cache_requests_total` | counter | `cache`, `result` | Lookups in the metadata cache, the advisory cache, and the Go publish time cache (`cache="go_info"`). |
 | `pkgwarden_advisory_source_enabled` | gauge | `source` | `1` for each advisory source the process queries and `0` for each it does not. OSV is always `1`. GHSA is `1` with a GitHub token, and OpenSSF is `1` with `-openssf`. |
 | `pkgwarden_openssf_last_success_timestamp_seconds` | gauge | none | Unix time of the last successful OpenSSF dataset load. `0` until the first load, and always `0` without `-openssf`. |
 | `pkgwarden_openssf_packages` | gauge | none | Packages in the loaded OpenSSF index. |

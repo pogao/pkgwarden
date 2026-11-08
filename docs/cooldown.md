@@ -26,7 +26,7 @@ The age is the time between now and the publish time the adapter reads from upst
 | npm | The version's entry in the packument's `time` object. |
 | PyPI | The earliest `upload_time_iso_8601` among the release's files in `https://pypi.org/pypi/<project>/json`. |
 | RubyGems | The earliest `created_at` among the version's platform entries in `https://rubygems.org/api/v1/versions/<gem>.json`. |
-| Go | The `Time` field of the version's `.info` file from `https://proxy.golang.org`. |
+| Go | The `Time` field of the version's `.info` file from `https://proxy.golang.org`. A listed version whose `.info` answers 404 or 410 has an unknown publish time. |
 | Cargo | The version's `created_at` in `https://crates.io/api/v1/crates/<crate>`. |
 
 These sources set three limits.

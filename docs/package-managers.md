@@ -195,7 +195,7 @@ The go command checks downloads against the checksum database at `sum.golang.org
 
 ### What pkgwarden filters
 
-- The version list at `/go/<module>/@v/list` loses blocked versions.
+- The version list at `/go/<module>/@v/list` loses blocked versions. `proxy.golang.org` lists some versions whose `.info` file answers 404. Their publish time is unknown, so the cooldown blocks them and the rest of the list is served.
 - `/go/<module>/@latest` answers with the newest allowed release, or the newest allowed prerelease when no release is allowed.
 - `.info` and `.mod` files pass through for every version, because minimal version selection reads the `go.mod` of versions it will not select.
 - A `.zip` download is checked against its version. The version must be canonical. A pseudo-version gets assessed even though no list includes it.
