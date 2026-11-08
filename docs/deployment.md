@@ -93,6 +93,7 @@ These timeouts apply to outbound requests:
 | Opening a TCP connection | 10 seconds |
 | The TLS handshake | 10 seconds |
 | Waiting for response headers | 60 seconds |
+| A shared metadata fetch, body included | 2 minutes |
 | A shared advisory lookup, all sources together | 30 seconds |
 | A pypistats download count | 5 seconds |
 

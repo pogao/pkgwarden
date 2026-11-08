@@ -33,6 +33,9 @@ func (e *StatusError) Error() string {
 
 const maxMetadataBytes = 128 << 20
 
+// fetchTimeout bounds a shared metadata fetch, body included.
+const fetchTimeout = 2 * time.Minute
+
 // Upstream fetches from upstream registries. Metadata fetched through Fetch
 // is cached briefly and concurrent identical requests share one round trip.
 // Artifacts go through Open and are never cached, and neither are POSTs.
@@ -58,8 +61,12 @@ func (u *Upstream) Fetch(ctx context.Context, url string, header http.Header) ([
 	}
 	telemetry.RecordCache("metadata", false)
 	fetched := false
-	v, err, _ := u.group.Do(key, func() (any, error) {
+	ch := u.group.DoChan(key, func() (any, error) {
 		fetched = true
+		// The fetch is shared, so it must outlive the request that started
+		// it. WithoutCancel keeps that request's ID for the upstream log line.
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), fetchTimeout)
+		defer cancel()
 		resp, err := u.Open(ctx, url, header)
 		if err != nil {
 			return nil, err
@@ -78,15 +85,21 @@ func (u *Upstream) Fetch(ctx context.Context, url string, header http.Header) ([
 		u.meta.Set(key, b)
 		return b, nil
 	})
+	var res singleflight.Result
+	select {
+	case res = <-ch:
+	case <-ctx.Done():
+		return nil, fmt.Errorf("GET %s: %w", url, ctx.Err())
+	}
 	if !fetched {
 		// The upstream line for this fetch carries the request ID of the
 		// request that started it.
 		slog.DebugContext(ctx, "joined in-flight fetch", "url", url)
 	}
-	if err != nil {
-		return nil, err
+	if res.Err != nil {
+		return nil, res.Err
 	}
-	return v.([]byte), nil
+	return res.Val.([]byte), nil
 }
 
 // FetchJSON fetches a metadata document and decodes it into v.

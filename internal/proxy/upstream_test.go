@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -76,6 +77,69 @@ func TestFetchLogsJoinedInFlightFetch(t *testing.T) {
 		}
 		if lines := logs.Messages(t, "joined in-flight fetch"); len(lines) != 1 {
 			t.Errorf("joined lines %v, want exactly one", lines)
+		}
+	})
+}
+
+func TestFetchSurvivesCancelOfTheRequestThatStartedIt(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		release := make(chan struct{})
+		u := NewUpstream(&http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			select {
+			case <-release:
+				return okResponse(r)
+			case <-r.Context().Done():
+				return nil, r.Context().Err()
+			}
+		})}, "pkgwarden-test", time.Minute)
+		const url = "https://registry.example/left-pad"
+
+		leaderCtx, cancel := context.WithCancel(context.Background())
+		leaderErr := make(chan error, 1)
+		go func() {
+			_, err := u.Fetch(leaderCtx, url, nil)
+			leaderErr <- err
+		}()
+		synctest.Wait()
+		var body []byte
+		var err error
+		done := make(chan struct{})
+		go func() {
+			body, err = u.Fetch(context.Background(), url, nil)
+			close(done)
+		}()
+		synctest.Wait()
+		cancel()
+		synctest.Wait()
+		select {
+		case err := <-leaderErr:
+			if !errors.Is(err, context.Canceled) {
+				t.Errorf("cancelled caller got %v, want context.Canceled", err)
+			}
+		default:
+			t.Error("cancelled caller still waiting on the shared fetch")
+		}
+		close(release)
+		<-done
+
+		if err != nil || string(body) != `{}` {
+			t.Errorf("joined fetch got %q, %v; want the body", body, err)
+		}
+	})
+}
+
+func TestFetchGivesUpOnAHungUpstream(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		u := NewUpstream(&http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			<-r.Context().Done()
+			return nil, r.Context().Err()
+		})}, "pkgwarden-test", time.Minute)
+
+		start := time.Now()
+		_, err := u.Fetch(context.Background(), "https://registry.example/left-pad", nil)
+
+		if !errors.Is(err, context.DeadlineExceeded) || time.Since(start) != fetchTimeout {
+			t.Errorf("hung fetch returned %v after %v, want a deadline error after %v", err, time.Since(start), fetchTimeout)
 		}
 	})
 }
