@@ -13,13 +13,22 @@ import (
 
 const blockSeverityEnv = "PKGWARDEN_BLOCK_SEVERITY"
 
-func unsetEnv(t *testing.T, key string) {
+// clearEnv unsets every variable parseConfig reads, so a value in the
+// developer's shell cannot leak into a test. t.Setenv restores each one
+// when the test ends.
+func clearEnv(t *testing.T) {
 	t.Helper()
-	t.Setenv(key, "")
-	os.Unsetenv(key)
+	for _, kv := range os.Environ() {
+		k, _, _ := strings.Cut(kv, "=")
+		if strings.HasPrefix(k, "PKGWARDEN_") || k == "GITHUB_TOKEN" {
+			t.Setenv(k, "")
+			os.Unsetenv(k)
+		}
+	}
 }
 
 func TestBlockSeverity(t *testing.T) {
+	clearEnv(t)
 	tests := []struct {
 		args []string
 		want advisory.Severity
@@ -33,7 +42,6 @@ func TestBlockSeverity(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(strings.Join(tt.args, " "), func(t *testing.T) {
-			unsetEnv(t, blockSeverityEnv)
 			c, err := parseConfig(tt.args)
 			if err != nil {
 				t.Fatal(err)
@@ -46,6 +54,7 @@ func TestBlockSeverity(t *testing.T) {
 }
 
 func TestBlockSeverityFromEnv(t *testing.T) {
+	clearEnv(t)
 	t.Setenv(blockSeverityEnv, "critical")
 	c, err := parseConfig(nil)
 	if err != nil {
@@ -64,9 +73,9 @@ func TestBlockSeverityFromEnv(t *testing.T) {
 }
 
 func TestBlockSeverityInvalid(t *testing.T) {
+	clearEnv(t)
 	for _, value := range []string{"moderate", "severe", "", "9.0"} {
 		t.Run(value, func(t *testing.T) {
-			unsetEnv(t, blockSeverityEnv)
 			_, err := parseConfig([]string{"-block-severity", value})
 			if err == nil || !strings.Contains(err.Error(), "low, medium, high, critical or none") {
 				t.Errorf("err = %v, want an error naming the accepted values", err)
@@ -76,8 +85,8 @@ func TestBlockSeverityInvalid(t *testing.T) {
 }
 
 func TestHelpHidesGitHubToken(t *testing.T) {
+	clearEnv(t)
 	t.Setenv("GITHUB_TOKEN", "fake-token-123")
-	unsetEnv(t, "PKGWARDEN_GHSA_TOKEN")
 	out, err := os.CreateTemp(t.TempDir(), "help")
 	if err != nil {
 		t.Fatal(err)
@@ -116,10 +125,10 @@ func TestGHSATokenPrecedence(t *testing.T) {
 		{name: "flag wins over both", githubToken: "gh", envToken: ptr("env"), args: []string{"-ghsa-token", "flag"}, want: "flag"},
 		{name: "empty flag turns the source off", githubToken: "gh", args: []string{"-ghsa-token", ""}},
 	}
+	clearEnv(t)
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Setenv("GITHUB_TOKEN", tt.githubToken)
-			unsetEnv(t, "PKGWARDEN_GHSA_TOKEN")
 			if tt.envToken != nil {
 				t.Setenv("PKGWARDEN_GHSA_TOKEN", *tt.envToken)
 			}
@@ -146,9 +155,9 @@ func TestLogLevel(t *testing.T) {
 		{[]string{"-log-level", "WARN"}, slog.LevelWarn},
 		{[]string{"-log-level", "error"}, slog.LevelError},
 	}
+	clearEnv(t)
 	for _, tt := range tests {
 		t.Run(strings.Join(tt.args, " "), func(t *testing.T) {
-			unsetEnv(t, "PKGWARDEN_LOG_LEVEL")
 			c, err := parseConfig(tt.args)
 			if err != nil {
 				t.Fatal(err)
@@ -161,8 +170,8 @@ func TestLogLevel(t *testing.T) {
 }
 
 func TestLogLevelInvalid(t *testing.T) {
+	clearEnv(t)
 	t.Run("flag", func(t *testing.T) {
-		unsetEnv(t, "PKGWARDEN_LOG_LEVEL")
 		if _, err := parseConfig([]string{"-log-level", "loud"}); err == nil {
 			t.Error("parseConfig accepted -log-level loud")
 		}
