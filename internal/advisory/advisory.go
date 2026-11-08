@@ -79,9 +79,9 @@ type Advisory struct {
 }
 
 // Range is a half-open version interval [Introduced, Fixed), or the closed
-// interval [Introduced, LastAffected] when LastAffected is set. An empty
-// Introduced (or "0") means the interval starts at the first release. An
-// empty Fixed and LastAffected means it never ends.
+// interval [Introduced, LastAffected] when LastAffected is set. An empty,
+// "0" or unparseable Introduced means the interval starts at the first
+// release. An empty Fixed and LastAffected means it never ends.
 type Range struct {
 	Introduced   string
 	Fixed        string

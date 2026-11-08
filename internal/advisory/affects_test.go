@@ -46,6 +46,12 @@ func TestAffects(t *testing.T) {
 			safe:     []string{"2.0", "2.0.0", "2.1"},
 		},
 		{
+			name:     "unparseable introduced starts at the first release",
+			adv:      Advisory{Ecosystem: ecosystem.Npm, Ranges: []Range{{Introduced: "not-a-version", Fixed: "9.9.9"}}},
+			affected: []string{"0.0.1", "1.0.0", "1.0.3", "9.9.8"},
+			safe:     []string{"9.9.9", "10.0.0"},
+		},
+		{
 			name:     "open-ended range",
 			adv:      Advisory{Ecosystem: ecosystem.Go, Ranges: []Range{{Introduced: "1.5.0"}}},
 			affected: []string{"v1.5.0", "v9.0.0"},
@@ -134,7 +140,7 @@ func pairwiseAffects(a Advisory, v string) bool {
 		return true
 	}
 	return slices.ContainsFunc(a.Ranges, func(r Range) bool {
-		if r.Introduced != "" && r.Introduced != "0" && version.Compare(a.Ecosystem, v, r.Introduced) < 0 {
+		if r.Introduced != "" && r.Introduced != "0" && version.Parse(a.Ecosystem, r.Introduced).OK() && version.Compare(a.Ecosystem, v, r.Introduced) < 0 {
 			return false
 		}
 		switch {

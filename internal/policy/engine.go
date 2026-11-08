@@ -92,7 +92,7 @@ func (e *Engine) cooldown(pkg *Package, a *Assessment) {
 	}
 	now := e.now()
 	for _, r := range pkg.Releases {
-		switch age := now.Sub(r.Published); {
+		switch age := max(now.Sub(r.Published), 0); {
 		case r.Published.IsZero():
 			a.flag(r.Version, Finding{Rule: RuleCooldown, Decision: Block, Reason: "publish time unknown, so the cooldown cannot be verified"})
 		case age < e.cfg.Cooldown:

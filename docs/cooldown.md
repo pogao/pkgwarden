@@ -11,7 +11,7 @@ The cooldown check runs on each release of a package. It produces a finding with
 | The release is younger than `-cooldown`. | `published <age> ago, inside the <cooldown> cooldown` |
 | Upstream reports no publish time for the release. | `publish time unknown, so the cooldown cannot be verified` |
 
-Ages under one day print as hours and minutes, such as `3h42m0s`. Longer ages print as days and hours, such as `7d` or `2d5h`.
+Ages under one day print as hours and minutes, such as `3h42m0s`. Longer ages print as days and hours, such as `7d` or `2d5h`. A publish time in the future counts as an age of zero, so the release is blocked with `published 0s ago`.
 
 The cooldown never warns. A release is either old enough or blocked.
 
