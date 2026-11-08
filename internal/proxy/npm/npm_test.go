@@ -38,6 +38,19 @@ const npmTime = "2006-01-02T15:04:05.000Z07:00"
 
 func tarballBytes(path string) []byte { return []byte("\x1f\x8b\x08\x00 tarball " + path) }
 
+// legacyPackument has a release that an old npm client published as
+// 1.0.0rc1. The registry lists it as 1.0.0-rc1, but its tarball keeps the
+// original name. The packument has no latest tag.
+const legacyPackument = `{
+  "name": "x",
+  "dist-tags": {"next": "1.1.0"},
+  "versions": {
+    "1.0.0-rc1": {"name": "x", "version": "1.0.0-rc1", "dist": {"tarball": "__REGISTRY__/x/-/x-1.0.0rc1.tgz"}},
+    "1.1.0": {"name": "x", "version": "1.1.0", "dist": {"tarball": "__REGISTRY__/x/-/x-1.1.0.tgz"}}
+  },
+  "time": {"created": "__OLD__", "1.0.0-rc1": "__OLD__", "1.1.0": "__YOUNG__"}
+}`
+
 func fakeRegistry(t *testing.T) *httptest.Server {
 	t.Helper()
 	tmpl, err := os.ReadFile("testdata/packument.json")
@@ -73,6 +86,8 @@ func fakeRegistry(t *testing.T) *httptest.Server {
 			w.Header().Set("ETag", `W/"upstream"`)
 			w.Header().Set("Last-Modified", "Mon, 02 Nov 2026 10:00:00 GMT")
 			w.Write([]byte(doc))
+		case p == "/x":
+			w.Write([]byte(strings.NewReplacer("__REGISTRY__", srv.URL, "__OLD__", old.Format(npmTime), "__YOUNG__", young.Format(npmTime)).Replace(legacyPackument)))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 			w.Write([]byte(`{"error":"Not found"}`))
@@ -269,6 +284,27 @@ func TestTarball(t *testing.T) {
 			assertBlocked(t, resp, body, tt.want...)
 		})
 	}
+}
+
+func TestTarballNamedAfterUnnormalizedVersion(t *testing.T) {
+	e := newEnv(t, week, nil)
+	_, body := get(t, e.proxy.URL+"/npm/x")
+	var doc packumentView
+	if err := json.Unmarshal(body, &doc); err != nil {
+		t.Fatal(err)
+	}
+	tarball := doc.Versions["1.0.0-rc1"].Dist.Tarball
+	if want := e.proxy.URL + "/npm/x/-/x-1.0.0rc1.tgz"; tarball != want {
+		t.Fatalf("1.0.0-rc1 tarball = %q, want %q", tarball, want)
+	}
+	resp, got := get(t, tarball)
+	if want := tarballBytes("/x/-/x-1.0.0rc1.tgz"); resp.StatusCode != http.StatusOK || !bytes.Equal(got, want) {
+		t.Errorf("1.0.0-rc1 tarball: status %d body %q, want 200 %q", resp.StatusCode, got, want)
+	}
+	resp, body = get(t, e.proxy.URL+"/npm/x/-/x-1.1.0.tgz")
+	assertBlocked(t, resp, body, "npm/x@1.1.0", "cooldown")
+	resp, body = get(t, e.proxy.URL+"/npm/x/-/x-9.9.9.tgz")
+	assertBlocked(t, resp, body, "npm/x@9.9.9", "unknown-release")
 }
 
 func TestVersionManifest(t *testing.T) {
