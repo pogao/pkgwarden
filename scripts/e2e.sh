@@ -106,6 +106,9 @@ expect_403 "pypi file urllib3 1.24.1 names the advisory" \
 echo "== go"
 expect_ok "go get golang.org/x/text@latest" client -e GOPROXY="$url/go" golang:1.27-alpine sh -c \
 	"mkdir /work && cd /work && go mod init example.com/e2e >/dev/null 2>&1 && go get golang.org/x/text@latest"
+# proxy.golang.org lists versions of aws-sdk-go whose .info answers 404.
+expect_ok "go list -m github.com/aws/aws-sdk-go@latest" client -e GOPROXY="$url/go" golang:1.27-alpine \
+	go list -m github.com/aws/aws-sdk-go@latest
 expect_refused "go get golang.org/x/text@v0.3.6 (vulnerable)" "403 Forbidden.*|pkgwarden blocked" client -e GOPROXY="$url/go" golang:1.27-alpine sh -c \
 	"mkdir /work && cd /work && go mod init example.com/e2e >/dev/null 2>&1 && go get golang.org/x/text@v0.3.6"
 
