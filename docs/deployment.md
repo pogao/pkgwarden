@@ -93,8 +93,9 @@ These timeouts apply to outbound requests:
 | Opening a TCP connection | 10 seconds |
 | The TLS handshake | 10 seconds |
 | Waiting for response headers | 60 seconds |
+| A shared metadata fetch, body included | 2 minutes |
 | A shared advisory lookup, all sources together | 30 seconds |
-| A pypistats download count | 5 seconds |
+| A download count from `api.npmjs.org`, `pypistats.org`, or the RubyGems gem API | 5 seconds |
 
 pkgwarden reads at most 128 MiB of a metadata document and drops the rest. A JSON document cut this way fails to parse.
 

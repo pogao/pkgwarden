@@ -150,6 +150,8 @@ func (r *Registry) load(ctx context.Context, name string) (*packument, *policy.P
 }
 
 func (r *Registry) weeklyDownloads(ctx context.Context, name string) int64 {
+	ctx, cancel := context.WithTimeout(ctx, proxy.DownloadsTimeout)
+	defer cancel()
 	var resp struct {
 		Downloads *int64 `json:"downloads"`
 	}

@@ -42,7 +42,7 @@ To check pkgwarden against the real registries and clients, run this:
 
 	./scripts/e2e.sh
 
-The script builds the image as `pkgwarden:e2e`, starts it with `-log-level debug` on a Docker network named `pkgwarden-e2e`, and publishes it on `127.0.0.1:18080`. It then runs each client in its own container, from the images `node:22-alpine`, `python:3.13-slim`, `golang:1.27-alpine`, `rust:1-slim`, and `ruby:3.3-slim`. When it finishes, it saves the proxy's log to `e2e-pkgwarden.log` and removes the container and the network.
+The script builds the image as `pkgwarden:e2e`, starts it with `-log-level debug` in a container and on a Docker network both named `pkgwarden-e2e-<pid>`, and publishes it on `127.0.0.1:18080`. Clients reach it as `pkgwarden`, its alias on that network. It then runs each client in its own container, from the images `node:22-alpine`, `python:3.13-slim`, `golang:1.27-alpine`, `rust:1-slim`, and `ruby:3.3-slim`. When it finishes, it saves the proxy's log to `e2e-pkgwarden.log` and removes the container and the network.
 
 The script checks these behaviors:
 
@@ -73,7 +73,7 @@ The script checks these behaviors:
 
 It prints `PASS` or `FAIL` for each check, and exits with status 1 if any check failed. The checks depend on live registry and advisory data. A new advisory for `requests` 2.31.0, for example, would fail a check without any code change.
 
-The script needs port 18080 free and no running container named `pkgwarden`.
+The script needs port 18080 free. It exits with status 1 before any check if it cannot create the network, start the container, or get an answer from `/healthz` within 30 seconds.
 
 ## Add an ecosystem adapter
 

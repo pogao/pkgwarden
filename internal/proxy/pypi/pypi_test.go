@@ -348,3 +348,52 @@ func TestPackageWithoutDownloadStats(t *testing.T) {
 		t.Errorf("downloads %d, want UnknownDownloads", pkg.WeeklyDownloads)
 	}
 }
+
+// The fake JSON API answers only once the stats request has arrived, so the
+// test also fails when the two lookups run one after the other.
+func TestPackageWhenDownloadStatsHang(t *testing.T) {
+	statsAsked := make(chan struct{})
+	release := make(chan struct{})
+	hung := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		close(statsAsked)
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	t.Cleanup(hung.Close)
+	t.Cleanup(func() { close(release) })
+	reg, _ := setup(t, nil, func(o *Options) {
+		o.Stats = hung.URL
+		api := o.PyPI
+		gated := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			select {
+			case <-statsAsked:
+			case <-time.After(3 * time.Second):
+				http.Error(w, "stats never requested", http.StatusServiceUnavailable)
+				return
+			}
+			resp, err := http.Get(api + r.URL.Path)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadGateway)
+				return
+			}
+			defer resp.Body.Close()
+			io.Copy(w, resp.Body)
+		}))
+		t.Cleanup(gated.Close)
+		o.PyPI = gated.URL
+	})
+
+	start := time.Now()
+	pkg, err := reg.Package(context.Background(), "demo-pkg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(start); elapsed > 10*time.Second {
+		t.Errorf("Package took %v, want the stats lookup cut short", elapsed)
+	}
+	if pkg.WeeklyDownloads != policy.UnknownDownloads || len(pkg.Releases) == 0 {
+		t.Errorf("downloads %d with %d releases, want UnknownDownloads and the project's releases", pkg.WeeklyDownloads, len(pkg.Releases))
+	}
+}

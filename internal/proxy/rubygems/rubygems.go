@@ -112,7 +112,9 @@ func (r *Registry) Package(ctx context.Context, name string) (*policy.Package, e
 		return err
 	})
 	g.Go(func() error {
-		downloadsErr = r.http.FetchJSON(gctx, r.upstream+"/api/v1/gems/"+url.PathEscape(name)+".json", &gem)
+		ctx, cancel := context.WithTimeout(gctx, proxy.DownloadsTimeout)
+		defer cancel()
+		downloadsErr = r.http.FetchJSON(ctx, r.upstream+"/api/v1/gems/"+url.PathEscape(name)+".json", &gem)
 		return nil
 	})
 	if err := g.Wait(); err != nil {

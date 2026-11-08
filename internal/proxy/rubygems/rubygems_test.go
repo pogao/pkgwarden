@@ -10,6 +10,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -391,5 +393,41 @@ func TestPackage(t *testing.T) {
 
 	if _, err := reg.Package(ctx, "missing"); !errors.Is(err, proxy.ErrNotFound) {
 		t.Errorf("missing package: err %v, want ErrNotFound", err)
+	}
+}
+
+func TestPackageWhenGemAPIHangs(t *testing.T) {
+	upstream, err := url.Parse(fakeRubyGems(t, map[string]fakeGem{"nokogiri": nokogiri(t)}).URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	release := make(chan struct{})
+	mux := http.NewServeMux()
+	mux.Handle("/", httputil.NewSingleHostReverseProxy(upstream))
+	mux.HandleFunc("GET /api/v1/gems/{file}", func(_ http.ResponseWriter, r *http.Request) {
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	})
+	front := httptest.NewServer(mux)
+	t.Cleanup(front.Close)
+	t.Cleanup(func() { close(release) })
+	reg := rubygems.New(rubygems.Options{
+		Upstream: front.URL,
+		Engine:   policy.New(policy.Config{Cooldown: 7 * day}, nil),
+		HTTP:     proxy.NewUpstream(front.Client(), "pkgwarden-test", time.Minute),
+	})
+
+	start := time.Now()
+	pkg, err := reg.Package(context.Background(), "nokogiri")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(start); elapsed > 10*time.Second {
+		t.Errorf("Package took %v, want the gem API lookup cut short", elapsed)
+	}
+	if pkg.WeeklyDownloads != policy.UnknownDownloads || len(pkg.Releases) != 2 {
+		t.Errorf("downloads %d with releases %+v, want UnknownDownloads and two releases", pkg.WeeklyDownloads, pkg.Releases)
 	}
 }
