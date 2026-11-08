@@ -11,6 +11,8 @@ import (
 	"path"
 	"strings"
 
+	"golang.org/x/mod/semver"
+
 	"github.com/pogao/pkgwarden/internal/ecosystem"
 	"github.com/pogao/pkgwarden/internal/policy"
 	"github.com/pogao/pkgwarden/internal/proxy"
@@ -215,6 +217,13 @@ func (r *Registry) filtered(w http.ResponseWriter, req *http.Request, name strin
 	}
 	if !ok {
 		latest := p.distTags["latest"]
+		if latest == "" {
+			for v := range p.versions {
+				if latest == "" || semver.Compare("v"+v, "v"+latest) > 0 {
+					latest = v
+				}
+			}
+		}
 		proxy.Enforce(ctx, w, proxy.JSON, proxy.StageMetadata, proxy.Subject{Ecosystem: ecosystem.Npm, Name: name, Version: latest}, a.Release(latest))
 		return nil, nil, nil, false
 	}
