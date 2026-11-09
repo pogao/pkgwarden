@@ -162,7 +162,11 @@ Without `-metrics-listen`, scrape the main port, such as `pkgwarden.internal:808
 
 pkgwarden stops on `SIGINT` or `SIGTERM`. It logs `shutting down`, stops accepting connections, waits for every request in progress however long it takes, and exits with status 0. A second signal stops it at once. With `-metrics-listen`, `/metrics` keeps answering until the requests on the main listener finish.
 
-pkgwarden cannot catch `SIGKILL`, so the time your orchestrator waits before it sends `SIGKILL` is the limit on a drain. `docker stop` sends `SIGTERM` and kills the container 10 seconds later by default. To give downloads more time, pass the limit in seconds to `-t`:
+pkgwarden cannot catch `SIGKILL`, so the time your orchestrator waits before it sends `SIGKILL` is the limit on a drain. `docker stop` sends `SIGTERM` and kills the container when its stop timeout runs out. A container started without a stop timeout gets the Docker daemon's default. That default is 10 seconds unless the daemon sets `default-stop-timeout`, and Docker Desktop sets it to 3 seconds. To give downloads a known limit, start the container with `--stop-timeout`, in seconds:
+
+	docker run -p 8080:8080 --stop-timeout 120 pkgwarden
+
+To set the limit for one stop instead, pass it to `-t`:
 
 	docker stop -t 120 <container>
 
