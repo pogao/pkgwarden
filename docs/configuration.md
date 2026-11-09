@@ -105,7 +105,7 @@ The TCP address the HTTP server listens on, in Go's `host:port` form. `:8080` li
 
 ### `-metrics-listen`
 
-The TCP address of a second HTTP listener that serves only `GET /metrics`, in the same form as `-listen`. When it is set, the main listener answers 404 for `/metrics`. When it is empty, the main listener serves `/metrics` next to `/healthz`. Both listeners shut down together. See [Metrics and request tracing](observability.md).
+The TCP address of a second HTTP listener that serves only `GET /metrics`, in the same form as `-listen`. When it is set, the main listener answers 404 for `/metrics`. When it is empty, the main listener serves `/metrics` next to `/healthz`. On shutdown, the metrics listener keeps serving until the requests on the main listener finish. See [Metrics and request tracing](observability.md).
 
 `/metrics` has no authentication. To keep it away from the clients that reach `-listen`, bind `-metrics-listen` to an address only your monitoring can reach, such as `127.0.0.1:9090` or an internal interface.
 

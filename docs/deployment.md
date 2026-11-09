@@ -119,6 +119,7 @@ pkgwarden logs these messages:
 | `joined in-flight fetch` | DEBUG | A metadata fetch shared the upstream call that another request started. That call's `upstream` line carries the other request's ID. | `url` |
 | `advisory cache hit` | DEBUG | pkgwarden answered an advisory lookup from its cache, with no upstream call. | `ecosystem`, `package` |
 | `pypi download count unavailable` | DEBUG | pypistats did not answer in time, or answered without a count. | `project`, `err` |
+| `shutting down` | INFO | pkgwarden got `SIGINT` or `SIGTERM`. It stops accepting connections and exits once the requests in progress finish. See [Stop it](#stop-it). | `signal` |
 | `exiting` | ERROR | pkgwarden stopped because of an error. | `err` |
 
 `version` is left out of `blocked` and `serving with warnings` when the verdict covers the whole package. `stage` is `metadata` or `artifact`, as in [Label values](observability.md#label-values). `rules` lists each rule behind the decision once. `reasons` holds the findings at the verdict's decision, as `<rule>: <reason>` joined with `; `. Unlike the 403 body, it is not shortened. `findings` holds the full finding objects.
@@ -132,7 +133,7 @@ These lines were captured on 2026-11-07. The long ones are trimmed with `...`:
 	{"time":"2026-11-07T18:36:34.113278-05:00","level":"WARN","msg":"serving with warnings","request_id":"7a03613358de0b64d235462c9cbbf1f3","ecosystem":"pypi","package":"requests","version":"2.31.0","stage":"artifact","rules":["advisory/vulnerability"],"reasons":"advisory/vulnerability: GHSA-9hjg-9r4m-mvj7 (medium vulnerability, via osv): Requests vulnerable to .netrc credentials leak via malicious URLs https:/..."}
 	{"time":"2026-11-07T18:36:34.761419-05:00","level":"INFO","msg":"hiding every version","request_id":"69a6fc7537a6c2da28e3936575013ffd","ecosystem":"rubygems","package":"nokogirl","stage":"metadata","rules":["heuristic/typosquat","heuristic/low-downloads","heuristic/score"],"findings":[{"rule":"heuristic/typosquat","decision":"block","reason":"resembles popular package \"nokogiri\" (one edit away)"},...]}
 
-pkgwarden does not log successful OpenSSF refreshes or a clean shutdown. Every response with a `warn` verdict logs its own line. A package-level warning therefore appears once for the metadata document and once for each download.
+pkgwarden does not log successful OpenSSF refreshes. A shutdown logs `shutting down` when it starts and nothing more when it ends cleanly. Every response with a `warn` verdict logs its own line. A package-level warning therefore appears once for the metadata document and once for each download.
 
 ## Scrape it with Prometheus
 
@@ -159,9 +160,37 @@ Without `-metrics-listen`, scrape the main port, such as `pkgwarden.internal:808
 
 ## Stop it
 
-pkgwarden stops on `SIGINT` or `SIGTERM`. It stops accepting connections, waits up to 15 seconds for requests in progress, and exits with status 0. If a request is still running after 15 seconds, pkgwarden logs `exiting` with the error and exits with status 1.
+pkgwarden stops on `SIGINT` or `SIGTERM`. It logs `shutting down`, stops accepting connections, waits for every request in progress however long it takes, and exits with status 0. A second signal stops it at once. With `-metrics-listen`, `/metrics` keeps answering until the requests on the main listener finish.
 
-`docker stop` sends `SIGTERM` and kills the container 10 seconds later by default. To give downloads the full 15 seconds, use `docker stop -t 20`.
+pkgwarden cannot catch `SIGKILL`, so the time your orchestrator waits before it sends `SIGKILL` is the limit on a drain. `docker stop` sends `SIGTERM` and kills the container 10 seconds later by default. To give downloads more time, pass the limit in seconds to `-t`:
+
+	docker stop -t 120 <container>
+
+## Stop it on Kubernetes
+
+To stop a pod, Kubernetes sends `SIGTERM`, and it sends `SIGKILL` when `terminationGracePeriodSeconds` runs out. The grace period is 30 seconds by default. Set it above the time your slowest download takes.
+
+When a pod starts to stop, Kubernetes removes it from the Service endpoints. kube-proxy and ingress controllers learn of the removal a moment later, and until then they still send new connections to the pod. If pkgwarden has already stopped accepting connections, those clients get a connection error. To close that gap, add a `preStop` hook that sleeps for 5 seconds. Kubernetes sends `SIGTERM` after the sleep, and pkgwarden keeps serving during it. The sleep counts against the grace period, so add its 5 seconds to the time of your slowest download.
+
+The image has no shell, so an `exec` hook that runs `sleep` cannot work. Use the `sleep` action instead. It needs Kubernetes 1.30 or later. The readiness probe below uses `/healthz`, as [Check its health](#check-its-health) describes:
+
+```yaml
+spec:
+  terminationGracePeriodSeconds: 120
+  containers:
+    - name: pkgwarden
+      image: registry.example.com/pkgwarden:latest
+      ports:
+        - containerPort: 8080
+      lifecycle:
+        preStop:
+          sleep:
+            seconds: 5
+      readinessProbe:
+        httpGet:
+          path: /healthz
+          port: 8080
+```
 
 ## Secure it
 
