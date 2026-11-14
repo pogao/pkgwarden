@@ -1,6 +1,7 @@
 package goproxy_test
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -48,7 +49,32 @@ type fakeModule struct {
 	listed     []string
 	times      map[string]time.Time
 	infoStatus map[string]int
+	modStatus  map[string]int
 	latest     string
+	// goMod holds the module path a version's go.mod declares, when it is
+	// not the escaped request path.
+	goMod map[string]string
+}
+
+// logrus mimics github.com/sirupsen/logrus, which proxy.golang.org also
+// serves under case variants such as github.com/Sirupsen/logrus. v1.0.3
+// predates its go.mod, so upstream synthesizes one with the requested path.
+func logrus(requested string) fakeModule {
+	return fakeModule{
+		listed: []string{"v1.0.3", "v1.9.3"},
+		times:  map[string]time.Time{"v1.0.3": ancient, "v1.9.3": old},
+		goMod:  map[string]string{"v1.0.3": requested, "v1.9.3": "github.com/sirupsen/logrus"},
+	}
+}
+
+// groupcache mimics github.com/golang/groupcache, which has no tags. pseudoV
+// predates its go.mod, so upstream synthesizes one with the requested path.
+func groupcache(requested string) fakeModule {
+	return fakeModule{
+		times:  map[string]time.Time{pseudoV: ancient, pseudoV2: old},
+		latest: pseudoV2,
+		goMod:  map[string]string{pseudoV: requested, pseudoV2: "github.com/golang/groupcache"},
+	}
 }
 
 func manyVersions(n int) fakeModule {
@@ -73,6 +99,8 @@ var modules = map[string]fakeModule{
 	},
 	"example.com/pseudo/old":   {times: map[string]time.Time{pseudoV: old}, latest: pseudoV},
 	"example.com/pseudo/young": {times: map[string]time.Time{pseudoV2: young}, latest: pseudoV2},
+	// lost has no @latest, as when upstream can no longer resolve a branch.
+	"example.com/pseudo/lost": {times: map[string]time.Time{pseudoV: old}},
 	"example.com/prerelease": {
 		listed: []string{"v0.1.0-alpha.1"},
 		times:  map[string]time.Time{"v0.1.0-alpha.1": old},
@@ -88,7 +116,23 @@ var modules = map[string]fakeModule{
 		times:      map[string]time.Time{"v1.0.0": old, "v1.1.0": old},
 		infoStatus: map[string]int{"v1.1.0": http.StatusInternalServerError},
 	},
-	"example.com/many": manyVersions(600),
+	"example.com/brokenmod": {
+		listed:    []string{"v1.0.0", "v1.1.0"},
+		times:     map[string]time.Time{"v1.0.0": old, "v1.1.0": old},
+		modStatus: map[string]int{"v1.1.0": http.StatusInternalServerError},
+	},
+	"example.com/nomod": {
+		listed:    []string{"v1.0.0"},
+		times:     map[string]time.Time{"v1.0.0": old},
+		modStatus: map[string]int{"v1.0.0": http.StatusNotFound},
+	},
+	"example.com/many":                         manyVersions(600),
+	"github.com/sirupsen/logrus":               logrus("github.com/sirupsen/logrus"),
+	"github.com/!sirupsen/logrus":              logrus("github.com/Sirupsen/logrus"),
+	"github.com/!s!i!r!u!p!s!e!n/!l!o!g!r!u!s": logrus("github.com/SIRUPSEN/LOGRUS"),
+	"github.com/fork/logrus":                   logrus("github.com/fork/logrus"),
+	"github.com/golang/groupcache":             groupcache("github.com/golang/groupcache"),
+	"github.com/!golang/groupcache":            groupcache("github.com/Golang/groupcache"),
 }
 
 func infoJSON(v string, t time.Time) string {
@@ -110,7 +154,7 @@ func fakeProxy(t *testing.T, requests, infoHits *atomic.Int64) *httptest.Server 
 		}
 		if esc, ok := strings.CutSuffix(p, "/@latest"); ok {
 			m, ok := modules[esc]
-			if !ok {
+			if !ok || m.latest == "" {
 				notFound()
 				return
 			}
@@ -154,11 +198,15 @@ func fakeProxy(t *testing.T, requests, infoHits *atomic.Int64) *httptest.Server 
 				return
 			}
 		}
+		if status, ok := m.modStatus[v]; ok && file[dot:] == ".mod" {
+			w.WriteHeader(status)
+			return
+		}
 		switch file[dot:] {
 		case ".info":
 			w.Write([]byte(infoJSON(v, tm)))
 		case ".mod":
-			fmt.Fprintf(w, "module %s\n", esc)
+			fmt.Fprintf(w, "module %s\n", cmp.Or(m.goMod[v], esc))
 		case ".zip":
 			w.Header().Set("Content-Type", "application/zip")
 			w.Write(zipBytes(p))
@@ -260,6 +308,7 @@ func TestZip(t *testing.T) {
 		"example.com/!foo/bar/@v/" + pseudoV + ".zip",
 		"example.com/!foo/bar/@v/v2.0.0+incompatible.zip",
 		"example.com/pseudo/old/@v/" + pseudoV + ".zip",
+		"example.com/pseudo/lost/@v/" + pseudoV + ".zip",
 	}
 	for _, p := range allowed {
 		before := telemetrytest.Value(t, "pkgwarden_artifacts_served_total", map[string]string{"ecosystem": "go"})
@@ -376,12 +425,80 @@ func TestCheckAgreesWithZip(t *testing.T) {
 	}
 }
 
-func TestInfoServerErrorFailsTheModule(t *testing.T) {
-	e := newEnv(t, nil)
-	for _, p := range []string{"@v/list", "@v/v1.0.0.zip"} {
-		if status, body := get(t, e.proxy.URL+"/go/example.com/broken/"+p); status != http.StatusBadGateway {
-			t.Errorf("%s: status %d body %q, want 502", p, status, body)
+func TestCaseVariantGetsTheCanonicalAdvisories(t *testing.T) {
+	mal := advisory.Advisory{
+		ID: "MAL-2026-0001", Source: "osv", Kind: advisory.Malicious, Ecosystem: ecosystem.Go,
+		Ranges: []advisory.Range{{Introduced: "0", Fixed: "v1.9.3"}},
+	}
+	e := newEnv(t, fakeSource{"github.com/sirupsen/logrus": {mal}, "github.com/golang/groupcache": {mal}})
+	tests := []struct {
+		module, version, decision string
+		rules                     []string
+	}{
+		{"github.com/sirupsen/logrus", "v1.0.3", "block", []string{"advisory/malicious"}},
+		{"github.com/Sirupsen/logrus", "v1.0.3", "block", []string{"advisory/malicious"}},
+		{"github.com/SIRUPSEN/LOGRUS", "v1.0.3", "block", []string{"advisory/malicious"}},
+		{"github.com/Sirupsen/logrus", "v1.9.3", "allow", nil},
+		// A fork whose go.mod still declares the original path is another
+		// repository, not a spelling of the original.
+		{"github.com/fork/logrus", "v1.0.3", "allow", nil},
+		// A module with no tags gets its declared path from @latest, not
+		// from the requested pseudo-version.
+		{"github.com/golang/groupcache", pseudoV, "block", []string{"advisory/malicious"}},
+		{"github.com/Golang/groupcache", pseudoV, "block", []string{"advisory/malicious"}},
+		{"github.com/Golang/groupcache", pseudoV2, "block", []string{"advisory/malicious"}},
+	}
+	for _, tt := range tests {
+		esc, err := module.EscapePath(tt.module)
+		if err != nil {
+			t.Fatal(err)
 		}
+		status, body := get(t, e.proxy.URL+"/go/"+esc+"/@v/"+tt.version+".zip")
+		if tt.decision == "allow" && status != http.StatusOK {
+			t.Errorf("%s@%s zip: status %d body %q, want 200", tt.module, tt.version, status, body)
+		}
+		if tt.decision == "block" {
+			assertBlocked(t, status, body, "go/"+tt.module+"@"+tt.version, "MAL-2026-0001")
+		}
+		if d, rules := checkAPI(t, e, tt.module, tt.version); d != tt.decision || !slices.Equal(rules, tt.rules) {
+			t.Errorf("%s@%s check: %s %v, want %s %v", tt.module, tt.version, d, rules, tt.decision, tt.rules)
+		}
+	}
+}
+
+func TestCanonicalPathIsFetchedOnce(t *testing.T) {
+	e := newEnv(t, nil)
+	tests := []struct {
+		path string
+		warm int64
+	}{
+		{"github.com/!sirupsen/logrus/@v/list", 0},
+		{"github.com/!golang/groupcache/@v/" + pseudoV + ".zip", 1},
+	}
+	for _, tt := range tests {
+		for i := range 2 {
+			before := e.requests.Load()
+			if status, body := get(t, e.proxy.URL+"/go/"+tt.path); status != http.StatusOK {
+				t.Fatalf("%s request %d: status %d body %q", tt.path, i+1, status, body)
+			}
+			if n := e.requests.Load() - before; i == 1 && n != tt.warm {
+				t.Errorf("%s: second request sent %d upstream requests, want %d", tt.path, n, tt.warm)
+			}
+		}
+	}
+}
+
+func TestUpstreamServerErrorFailsTheModule(t *testing.T) {
+	e := newEnv(t, nil)
+	for _, mod := range []string{"example.com/broken", "example.com/brokenmod"} {
+		for _, p := range []string{"@v/list", "@v/v1.0.0.zip"} {
+			if status, body := get(t, e.proxy.URL+"/go/"+mod+"/"+p); status != http.StatusBadGateway {
+				t.Errorf("%s/%s: status %d body %q, want 502", mod, p, status, body)
+			}
+		}
+	}
+	if status, body := get(t, e.proxy.URL+"/go/example.com/nomod/@v/v1.0.0.zip"); status != http.StatusOK {
+		t.Errorf("a missing go.mod: status %d body %q, want 200", status, body)
 	}
 }
 

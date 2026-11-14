@@ -203,6 +203,7 @@ The go command checks downloads against the checksum database at `sum.golang.org
 - `/go/<module>/@latest` answers with the newest allowed release, or the newest allowed prerelease when no release is allowed.
 - `.info` and `.mod` files pass through for every version, because minimal version selection reads the `go.mod` of versions it will not select. A version or query with a character other than a letter, a digit, `.`, `-`, `+`, `_`, or `~` gets a 400 and never reaches upstream.
 - A `.zip` download is checked against its version. The version must be canonical, so `v1.6.zip` gets a 400 and never reaches upstream. A pseudo-version gets assessed even though no list includes it. A version that no list includes and that has no `.info` file gets an `unknown-release` block.
+- A module requested under another letter case of its path, such as `github.com/Sirupsen/logrus`, gets the advisories filed under the path its `go.mod` declares. See [How Go module paths are matched](advisories.md#how-go-module-paths-are-matched).
 
 ### What you see when a release is blocked
 

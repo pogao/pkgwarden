@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/mod/modfile"
 	"golang.org/x/mod/module"
 	"golang.org/x/mod/semver"
 	"golang.org/x/sync/errgroup"
@@ -45,6 +46,8 @@ type Registry struct {
 	// .info never changes, and a module can list thousands of versions,
 	// more than the shared metadata cache holds.
 	times *cache.TTL[string, time.Time]
+	// canonical holds canonicalPath results by module@version.
+	canonical *cache.TTL[string, string]
 }
 
 // New returns a Registry, filling in defaults for empty Options fields.
@@ -53,7 +56,11 @@ func New(o Options) *Registry {
 		o.Upstream = "https://proxy.golang.org"
 	}
 	o.Upstream = strings.TrimSuffix(o.Upstream, "/")
-	return &Registry{o: o, times: cache.New[string, time.Time](24*time.Hour, 100_000)}
+	return &Registry{
+		o:         o,
+		times:     cache.New[string, time.Time](24*time.Hour, 100_000),
+		canonical: cache.New[string, string](24*time.Hour, 10_000),
+	}
 }
 
 // Ecosystem returns ecosystem.Go.
@@ -102,15 +109,24 @@ func (r *Registry) load(ctx context.Context, mod, extra string) (*policy.Package
 		versions = append(slices.Clip(listed), extra)
 	}
 
-	var releases []policy.Release
-	if len(versions) == 0 {
-		var latest info
-		if err := r.o.HTTP.FetchJSON(ctx, base+"/@latest", &latest); err != nil {
+	// head is the version whose go.mod names the module. It ignores extra,
+	// so that a zip, the list, and @latest all read the same go.mod.
+	head := newest(listed, func(string) bool { return true })
+	var latest info
+	if len(listed) == 0 {
+		err := r.o.HTTP.FetchJSON(ctx, base+"/@latest", &latest)
+		if err == nil && !semver.IsValid(latest.Version) {
+			err = fmt.Errorf("%s/@latest: invalid version %q", base, latest.Version)
+		}
+		// A zip names its version, so it does not need @latest to exist.
+		if err != nil && (extra == "" || !errors.Is(err, proxy.ErrNotFound)) {
 			return nil, nil, err
 		}
-		if !semver.IsValid(latest.Version) {
-			return nil, nil, fmt.Errorf("%s/@latest: invalid version %q", base, latest.Version)
-		}
+		head = latest.Version
+	}
+
+	var releases []policy.Release
+	if len(versions) == 0 {
 		releases = []policy.Release{{Version: latest.Version, Published: latest.Time}}
 	} else {
 		releases = make([]policy.Release, len(versions))
@@ -154,7 +170,38 @@ func (r *Registry) load(ctx context.Context, mod, extra string) (*policy.Package
 			pkg.Created = rel.Published
 		}
 	}
+	if pkg.Canonical, err = r.canonicalPath(ctx, mod, head); err != nil {
+		return nil, nil, err
+	}
 	return pkg, listed, nil
+}
+
+// canonicalPath returns the module path that the go.mod of version v
+// declares, when it differs from mod only in case, and "" otherwise.
+// Hosts such as GitHub resolve a repository under any case of its owner and
+// name, so upstream serves the same module under each spelling, while
+// advisories name the declared path. Upstream synthesizes a go.mod that
+// declares mod for a version without one.
+func (r *Registry) canonicalPath(ctx context.Context, mod, v string) (string, error) {
+	if v == "" {
+		return "", nil
+	}
+	if p, ok := r.canonical.Get(mod + "@" + v); ok {
+		return p, nil
+	}
+	b, err := r.o.HTTP.Fetch(ctx, r.fileURL(route{endpoint: modFile, module: mod, version: v}), nil)
+	if errors.Is(err, proxy.ErrNotFound) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	p := modfile.ModulePath(b)
+	if p == mod || !strings.EqualFold(p, mod) {
+		p = ""
+	}
+	r.canonical.Set(mod+"@"+v, p)
+	return p, nil
 }
 
 // publishTime reads the Time of a .info file. It returns the zero time

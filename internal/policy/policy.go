@@ -15,6 +15,10 @@ const UnknownDownloads = -1
 type Package struct {
 	Ecosystem ecosystem.Ecosystem
 	Name      string
+	// Canonical is the name the package declares for itself when Name is
+	// another spelling that the registry also serves, and "" otherwise.
+	// Advisories are looked up under both names.
+	Canonical string
 	// Created is when the package was first published; zero when unknown.
 	Created time.Time
 	// WeeklyDownloads is a recent weekly download estimate, or UnknownDownloads.
