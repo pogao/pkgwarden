@@ -144,6 +144,44 @@ func TestFetchGivesUpOnAHungUpstream(t *testing.T) {
 	})
 }
 
+func TestFetchParsedSharesOneParseAndCachesIt(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		release := make(chan struct{})
+		calls, parses := 0, 0
+		u := NewUpstream(&http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			calls++
+			<-release
+			return okResponse(r)
+		})}, "pkgwarden-test", time.Minute, 64<<20)
+		parse := func(b []byte) (string, int64, error) {
+			parses++
+			return "parsed " + string(b), int64(len(b)), nil
+		}
+		const url = "https://registry.example/left-pad"
+		fetch := func() {
+			if v, err := FetchParsed(context.Background(), u, url, nil, parse); err != nil || v != "parsed {}" {
+				t.Errorf("FetchParsed = %q, %v; want the parsed body", v, err)
+			}
+		}
+
+		var wg sync.WaitGroup
+		for range 4 {
+			wg.Go(fetch)
+		}
+		synctest.Wait()
+		close(release)
+		wg.Wait()
+		fetch()
+
+		if calls != 1 || parses != 1 {
+			t.Errorf("%d upstream calls and %d parses for five fetches, want one of each", calls, parses)
+		}
+		if b, err := u.Fetch(context.Background(), url, nil); err != nil || string(b) != `{}` {
+			t.Errorf("Fetch after FetchParsed = %q, %v; want the body", b, err)
+		}
+	})
+}
+
 func TestDocumentOverHalfTheCacheBudgetIsNotCached(t *testing.T) {
 	bodies := map[string]string{"/small": `{}`, "/large": strings.Repeat("x", 600)}
 	calls := map[string]int{}
