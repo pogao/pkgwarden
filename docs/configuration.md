@@ -50,7 +50,7 @@ This is the output of `env -u GITHUB_TOKEN go run ./cmd/pkgwarden -h 2>&1` at th
 	  -public-url string
 	    	externally visible base URL, used in rewritten download links (default: derived from each request)
 
-There are 20 flags. To count them, run this:
+There are 21 flags. To count them, run this:
 
 	go run ./cmd/pkgwarden -h 2>&1 | grep -c '^  -'
 
