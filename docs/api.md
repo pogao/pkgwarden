@@ -188,7 +188,7 @@ The upstream is `https://registry.npmjs.org`. Download counts come from `https:/
 | `GET /npm/<name>/-/<file>.tgz` | Enforced tarball. The version is the one whose packument entry links to the file. If no entry does, the version comes from the file name. |
 | `GET /npm/-/package/<name>/dist-tags` | The dist-tags of the filtered packument, for `npm dist-tag ls`. |
 | `POST /npm/-/npm/v1/security/advisories/bulk`, `POST /npm/-/npm/v1/security/audits/quick` | Passed through, for `npm audit`. |
-| Any other `GET` under `/npm/-/` | Passed through, with only the `Accept` header and the query string. |
+| Any other `GET` under `/npm/-/` | Passed through, with only the `Accept` header and the query string. A path that [Top-level routes](#top-level-routes) rejects gets 404 instead. |
 | Any other `GET` | 404, without an upstream request. |
 | Any other method | 405. |
 
@@ -217,7 +217,7 @@ The upstream is `https://rubygems.org`.
 | `GET /rubygems/gems/<file>`, `GET /rubygems/downloads/<file>` | Enforced download when `<file>` ends in `.gem`. 404 otherwise, with no request upstream. |
 | `GET /rubygems/quick/Marshal.4.8/<file>` | Enforced gemspec when `<file>` ends in `.gemspec.rz`. 404 otherwise, with no request upstream. |
 | Any other `GET` under `/rubygems/info/`, `/rubygems/gems/`, `/rubygems/downloads/`, or `/rubygems/quick/`, such as `/rubygems/info/<gem>/` | 404, with no request upstream. |
-| Any other `GET`, including `/rubygems/versions`, `/rubygems/names`, and `/rubygems/specs.4.8.gz` | Passed through, with `Range`, `If-None-Match`, `If-Modified-Since`, `Accept-Encoding`, and the query string. |
+| Any other `GET`, including `/rubygems/versions`, `/rubygems/names`, and `/rubygems/specs.4.8.gz` | Passed through, with `Range`, `If-None-Match`, `If-Modified-Since`, `Accept-Encoding`, and the query string. A path that [Top-level routes](#top-level-routes) rejects gets 404 instead. |
 
 The filtered info file keeps every surviving line byte for byte. Its `ETag` is the MD5 of the filtered body, and its `Repr-Digest` is the SHA-256 of the filtered body. It answers a matching `If-None-Match` with 304. It ignores `Range` and always sends the whole file.
 
@@ -234,7 +234,7 @@ The upstream is `https://proxy.golang.org`. The routes use the escaped module pa
 | `GET /go/<module>/@v/<version>.info`, `GET /go/<module>/@v/<version>.mod` | Passed through for every version, because minimal version selection reads the `go.mod` of versions it will not select. The version can also be a query that upstream resolves, such as `v1.2` or `master`. It can contain only letters, digits, `.`, `-`, `+`, `_`, and `~`, or the request gets 400. |
 | `GET /go/<module>/@v/<version>.zip` | Enforced. The version must be canonical, or the request gets 400 with `bad request: <module>@<version>: invalid version: not canonical`. A version that the list does not include, such as a pseudo-version, is assessed from its `.info` file. If it has no `.info` file either, it gets an `unknown-release` block. |
 | `GET /go/sumdb/<path>` | 404, without a request upstream. `proxy.golang.org` also answers 404 for `/sumdb/`. The go command then contacts `sum.golang.org` directly. |
-| Any other path | 400 with `bad request: <error>`. |
+| Any other path | 400 with `bad request: <error>`. A path that [Top-level routes](#top-level-routes) rejects gets 404 instead. |
 | Any method but `GET` | 405, including `HEAD`. |
 
 ### Cargo
