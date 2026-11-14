@@ -180,14 +180,15 @@ func (r *Registry) publishTime(ctx context.Context, url string) (time.Time, erro
 	return in.Time, nil
 }
 
-type endpoint int
+// endpoint is a module proxy endpoint. A file endpoint is its extension.
+type endpoint string
 
 const (
-	list endpoint = iota
-	latest
-	infoFile
-	modFile
-	zipFile
+	list     endpoint = "list"
+	latest   endpoint = "@latest"
+	infoFile endpoint = ".info"
+	modFile  endpoint = ".mod"
+	zipFile  endpoint = ".zip"
 )
 
 // route is a parsed module proxy request.
@@ -197,7 +198,14 @@ type route struct {
 	version  string // only for .info, .mod and .zip
 }
 
-var fileEndpoints = map[string]endpoint{".info": infoFile, ".mod": modFile, ".zip": zipFile}
+// fileURL is the upstream URL of a .info, .mod or .zip route. It is built
+// from the parsed route, never from the request path, so that the file
+// fetched is the one parseRoute checked.
+func (r *Registry) fileURL(rt route) string {
+	esc, _ := module.EscapePath(rt.module)
+	ev, _ := module.EscapeVersion(rt.version)
+	return r.o.Upstream + "/" + esc + "/@v/" + ev + string(rt.endpoint)
+}
 
 // parseRoute parses a request path in its escaped form, such as
 // github.com/!burnt!sushi/toml/@v/v1.3.2.zip.
@@ -217,23 +225,37 @@ func parseRoute(p string) (route, error) {
 	if file == "list" {
 		return route{endpoint: list, module: mod}, nil
 	}
-	ext := path.Ext(file)
-	e, ok := fileEndpoints[ext]
-	if !ok {
+	e := endpoint(path.Ext(file))
+	if e != infoFile && e != modFile && e != zipFile {
 		return route{}, fmt.Errorf("unknown endpoint %q", p)
 	}
-	v, err := module.UnescapeVersion(strings.TrimSuffix(file, ext))
+	v, err := module.UnescapeVersion(strings.TrimSuffix(file, string(e)))
 	if err != nil {
 		return route{}, err
 	}
 	// A query such as master.info resolves upstream, but a zip must name a
 	// canonical version so advisories match it.
+	check := checkQuery
 	if e == zipFile {
-		if err := checkZipVersion(mod, v); err != nil {
-			return route{}, err
-		}
+		check = checkZipVersion
+	}
+	if err := check(mod, v); err != nil {
+		return route{}, err
 	}
 	return route{endpoint: e, module: mod, version: v}, nil
+}
+
+// checkQuery reports whether v is a version or query, such as v1.2.3, v1.2
+// or master, that a .info or .mod of mod can name. UnescapeVersion allows
+// characters such as # and %, which would change the upstream URL.
+func checkQuery(mod, v string) error {
+	disallowed := func(c rune) bool {
+		return !('a' <= c && c <= 'z' || 'A' <= c && c <= 'Z' || '0' <= c && c <= '9' || strings.ContainsRune(".-+_~", c))
+	}
+	if strings.ContainsFunc(v, disallowed) {
+		return &module.ModuleError{Path: mod, Err: &module.InvalidVersionError{Version: v, Err: errors.New("disallowed characters")}}
+	}
+	return nil
 }
 
 // checkZipVersion reports whether v is a version a zip of mod can name.
@@ -254,8 +276,10 @@ func (r *Registry) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	p := strings.TrimPrefix(req.URL.Path, "/")
+	// proxy.golang.org does not serve the checksum database either, and a
+	// 404 sends the go command to sum.golang.org.
 	if strings.HasPrefix(p, "sumdb/") {
-		r.passthrough(w, req, p)
+		http.NotFound(w, req)
 		return
 	}
 	rt, err := parseRoute(p)
@@ -269,11 +293,11 @@ func (r *Registry) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	case latest:
 		r.serveLatest(w, req, rt)
 	case zipFile:
-		r.serveZip(w, req, rt, p)
+		r.serveZip(w, req, rt)
 	default:
 		// MVS reads go.mod files of versions it will not select, so .info
 		// and .mod stay available for blocked versions.
-		r.passthrough(w, req, p)
+		r.passthrough(w, req, rt)
 	}
 }
 
@@ -319,13 +343,7 @@ func (r *Registry) serveLatest(w http.ResponseWriter, req *http.Request, rt rout
 		proxy.Enforce(ctx, w, proxy.Text, proxy.StageMetadata, s, a.Release(s.Version))
 		return
 	}
-	esc, _ := module.EscapePath(rt.module)
-	ev, err := module.EscapeVersion(v)
-	if err != nil {
-		proxy.WriteError(w, err)
-		return
-	}
-	b, err := r.o.HTTP.Fetch(req.Context(), r.o.Upstream+"/"+esc+"/@v/"+ev+".info", http.Header{"Accept": {"application/json"}})
+	b, err := r.o.HTTP.Fetch(req.Context(), r.fileURL(route{endpoint: infoFile, module: rt.module, version: v}), http.Header{"Accept": {"application/json"}})
 	if err != nil {
 		proxy.WriteError(w, err)
 		return
@@ -356,7 +374,7 @@ func newest(versions []string, ok func(string) bool) string {
 	return pre
 }
 
-func (r *Registry) serveZip(w http.ResponseWriter, req *http.Request, rt route, p string) {
+func (r *Registry) serveZip(w http.ResponseWriter, req *http.Request, rt route) {
 	pkg, _, err := r.load(req.Context(), rt.module, rt.version)
 	if err != nil {
 		proxy.WriteError(w, err)
@@ -368,7 +386,7 @@ func (r *Registry) serveZip(w http.ResponseWriter, req *http.Request, rt route, 
 	if !proxy.Enforce(ctx, w, proxy.Text, proxy.StageArtifact, s, a.Release(rt.version)) {
 		return
 	}
-	resp, err := r.o.HTTP.Open(ctx, r.o.Upstream+"/"+p, nil)
+	resp, err := r.o.HTTP.Open(ctx, r.fileURL(rt), nil)
 	if err != nil {
 		proxy.WriteError(w, err)
 		return
@@ -377,8 +395,8 @@ func (r *Registry) serveZip(w http.ResponseWriter, req *http.Request, rt route, 
 	proxy.ServeArtifact(w, req, s, resp)
 }
 
-func (r *Registry) passthrough(w http.ResponseWriter, req *http.Request, p string) {
-	resp, err := r.o.HTTP.Open(req.Context(), r.o.Upstream+"/"+p, nil)
+func (r *Registry) passthrough(w http.ResponseWriter, req *http.Request, rt route) {
+	resp, err := r.o.HTTP.Open(req.Context(), r.fileURL(rt), nil)
 	if err != nil {
 		proxy.WriteError(w, err)
 		return

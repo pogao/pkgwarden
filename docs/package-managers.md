@@ -193,13 +193,13 @@ Do not add `,direct` or `|direct` after pkgwarden. With `,direct`, the go comman
 
 Modules that match `GOPRIVATE` or `GONOPROXY` skip every proxy, so pkgwarden never checks them.
 
-The go command checks downloads against the checksum database at `sum.golang.org`. pkgwarden does not serve it, because `proxy.golang.org` answers 404 for `/sumdb/`, so the go command contacts `sum.golang.org` itself. Your clients need network access to it. If they cannot have it, set `GOSUMDB=off` or list your modules in `GONOSUMDB`. Both turn off that verification.
+The go command checks downloads against the checksum database at `sum.golang.org`. pkgwarden does not serve it. It answers 404 for `/go/sumdb/`, as `proxy.golang.org` does for `/sumdb/`, so the go command contacts `sum.golang.org` itself. Your clients need network access to it. If they cannot have it, set `GOSUMDB=off` or list your modules in `GONOSUMDB`. Both turn off that verification.
 
 ### What pkgwarden filters
 
 - The version list at `/go/<module>/@v/list` loses blocked versions. `proxy.golang.org` lists some versions whose `.info` file answers 404. Their publish time is unknown, so the cooldown blocks them and the rest of the list is served.
 - `/go/<module>/@latest` answers with the newest allowed release, or the newest allowed prerelease when no release is allowed.
-- `.info` and `.mod` files pass through for every version, because minimal version selection reads the `go.mod` of versions it will not select.
+- `.info` and `.mod` files pass through for every version, because minimal version selection reads the `go.mod` of versions it will not select. A version or query with a character other than a letter, a digit, `.`, `-`, `+`, `_`, or `~` gets a 400 and never reaches upstream.
 - A `.zip` download is checked against its version. The version must be canonical, so `v1.6.zip` gets a 400 and never reaches upstream. A pseudo-version gets assessed even though no list includes it. A version that no list includes and that has no `.info` file gets an `unknown-release` block.
 
 ### What you see when a release is blocked

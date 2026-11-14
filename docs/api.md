@@ -231,9 +231,9 @@ The upstream is `https://proxy.golang.org`. The routes use the escaped module pa
 | --- | --- |
 | `GET /go/<module>/@v/list` | Filtered version list. |
 | `GET /go/<module>/@latest` | The `.info` of the newest allowed release, or of the newest allowed prerelease when no release is allowed. |
-| `GET /go/<module>/@v/<version>.info`, `GET /go/<module>/@v/<version>.mod` | Passed through for every version, because minimal version selection reads the `go.mod` of versions it will not select. |
+| `GET /go/<module>/@v/<version>.info`, `GET /go/<module>/@v/<version>.mod` | Passed through for every version, because minimal version selection reads the `go.mod` of versions it will not select. The version can also be a query that upstream resolves, such as `v1.2` or `master`. It can contain only letters, digits, `.`, `-`, `+`, `_`, and `~`, or the request gets 400. |
 | `GET /go/<module>/@v/<version>.zip` | Enforced. The version must be canonical, or the request gets 400 with `bad request: <module>@<version>: invalid version: not canonical`. A version that the list does not include, such as a pseudo-version, is assessed from its `.info` file. If it has no `.info` file either, it gets an `unknown-release` block. |
-| `GET /go/sumdb/<path>` | Passed through. `proxy.golang.org` answers 404, so the go command contacts `sum.golang.org` directly. |
+| `GET /go/sumdb/<path>` | 404, without a request upstream. `proxy.golang.org` also answers 404 for `/sumdb/`. The go command then contacts `sum.golang.org` directly. |
 | Any other path | 400 with `bad request: <error>`. |
 | Any method but `GET` | 405, including `HEAD`. |
 

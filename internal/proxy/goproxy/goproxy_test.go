@@ -104,10 +104,6 @@ func fakeProxy(t *testing.T, requests, infoHits *atomic.Int64) *httptest.Server 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
 		p := strings.TrimPrefix(r.URL.Path, "/")
-		if strings.HasPrefix(p, "sumdb/") {
-			fmt.Fprintf(w, "sumdb %s", p)
-			return
-		}
 		notFound := func() {
 			w.WriteHeader(http.StatusNotFound)
 			fmt.Fprintf(w, "not found: %s", p)
@@ -142,6 +138,9 @@ func fakeProxy(t *testing.T, requests, infoHits *atomic.Int64) *httptest.Server 
 		// Like proxy.golang.org, resolve a query such as v1.0 for .info only.
 		if c := module.CanonicalVersion(v); c != "" && file[dot:] == ".info" {
 			v = c
+		}
+		if v == "master" && file[dot:] == ".info" {
+			v = m.latest
 		}
 		tm, ok := m.times[v]
 		if !ok {
@@ -418,10 +417,47 @@ func TestInfoAndModStayAvailableForBlockedVersions(t *testing.T) {
 	tests := []struct{ path, want string }{
 		{"example.com/!foo/bar/@v/v1.1.0.info", infoJSON("v1.1.0", young)},
 		{"example.com/!foo/bar/@v/v1.1.0.mod", "module example.com/!foo/bar\n"},
+		{"example.com/!foo/bar/@v/v1.0.0-!r!c.1.info", infoJSON("v1.0.0-RC.1", old)},
+		{"example.com/!foo/bar/@v/" + pseudoV2 + ".info", infoJSON(pseudoV2, young)},
+		{"example.com/!foo/bar/@v/" + pseudoV2 + ".mod", "module example.com/!foo/bar\n"},
+		{"example.com/!foo/bar/@v/master.info", infoJSON("v1.2.0-rc.1", young)},
 	}
 	for _, tt := range tests {
 		if status, body := get(t, e.proxy.URL+"/go/"+tt.path); status != http.StatusOK || body != tt.want {
 			t.Errorf("%s: status %d body %q, want %q", tt.path, status, body, tt.want)
+		}
+	}
+}
+
+func TestCraftedPathsNeverReachUpstream(t *testing.T) {
+	e := newEnv(t, nil)
+	const blocked = "example.com/!foo/bar/@v/v1.1.0"
+	for _, p := range []string{
+		blocked + ".zip%23.info",
+		blocked + ".zip%23.mod",
+		blocked + ".zip%3F.info",
+		blocked + ".zip%3F.mod",
+		blocked + ".zip%2523.info",
+		blocked + ".zip%253F.mod",
+		blocked + "%25.info",
+		"example.com/!foo/bar/@v/list%23.info",
+		"example.com/!foo/bar/@v/%2e%2e%2f%2e%2e%2f@latest%23.info",
+		"example.com/!foo/bar/@v/..%2f..%2f@latest%23.mod",
+		"sumdb/sum.golang.org/supported",
+		"sumdb/%2e%2e/" + blocked + ".zip",
+		"sumdb/..%2f" + blocked + ".zip",
+		"sumdb/%2e%2e/" + blocked + ".info",
+		"sumdb/%252e%252e/" + blocked + ".zip",
+		"sumdb/%2e%2e/example.com/!foo/bar/@v/list",
+		"sumdb/%2e%2e/example.com/!foo/bar/@latest",
+	} {
+		before := e.requests.Load()
+		status, body := get(t, e.proxy.URL+"/go/"+p)
+		if status != http.StatusBadRequest && status != http.StatusNotFound {
+			t.Errorf("%s: status %d body %q, want 400 or 404", p, status, body)
+		}
+		if n := e.requests.Load() - before; n != 0 {
+			t.Errorf("%s: sent %d upstream requests, want 0", p, n)
 		}
 	}
 }
@@ -473,11 +509,8 @@ func TestPackage(t *testing.T) {
 	}
 }
 
-func TestSumdbAndMethods(t *testing.T) {
+func TestMethods(t *testing.T) {
 	e := newEnv(t, nil)
-	if status, body := get(t, e.proxy.URL+"/go/sumdb/sum.golang.org/supported"); status != http.StatusOK || body != "sumdb sumdb/sum.golang.org/supported" {
-		t.Errorf("sumdb: status %d body %q", status, body)
-	}
 	resp, err := http.Post(e.proxy.URL+"/go/example.com/!foo/bar/@v/list", "text/plain", nil)
 	if err != nil {
 		t.Fatal(err)
