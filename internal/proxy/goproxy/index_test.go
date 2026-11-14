@@ -1,6 +1,7 @@
 package goproxy_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -31,6 +32,16 @@ type fakeIndex struct {
 	status   int
 	cut      int
 	requests int
+	// traffic is when the next version that other clients fetched enters
+	// the feed, one every 100ms once set, so that the feed's time passes.
+	traffic  time.Time
+	trafficN int
+	// visible, when set, hides the entries after visible(now), as the real
+	// feed does for a while after it records them.
+	visible func(now time.Time) time.Time
+	// cache, when set, answers a URL it answered before with the same
+	// bytes, as the shared caches in front of index.golang.org do.
+	cache map[string][]byte
 }
 
 func newFakeIndex() *fakeIndex {
@@ -40,8 +51,18 @@ func newFakeIndex() *fakeIndex {
 func (f *fakeIndex) add(path, version string, ts time.Time) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.insert(path, version, ts)
+}
+
+func (f *fakeIndex) insert(path, version string, ts time.Time) {
 	f.entries = append(f.entries, indexLine{path, version, ts})
 	slices.SortStableFunc(f.entries, func(a, b indexLine) int { return a.Timestamp.Compare(b.Timestamp) })
+}
+
+func (f *fakeIndex) startTraffic() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.traffic = time.Now()
 }
 
 func (f *fakeIndex) addOnFetch(path, version string) {
@@ -100,15 +121,25 @@ func (f *fakeIndex) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.(http.Flusher).Flush()
 		panic(http.ErrAbortHandler)
 	}
+	now := time.Now()
+	for ; !f.traffic.IsZero() && !f.traffic.After(now); f.traffic = f.traffic.Add(100 * time.Millisecond) {
+		f.trafficN++
+		f.insert("example.com/traffic", fmt.Sprintf("v0.0.%d", f.trafficN), f.traffic)
+	}
+	if b, ok := f.cache[r.URL.RequestURI()]; ok {
+		w.Write(b)
+		return
+	}
 	since, err := time.Parse(time.RFC3339Nano, r.URL.Query().Get("since"))
 	limit, lerr := strconv.Atoi(r.URL.Query().Get("limit"))
 	if err != nil || lerr != nil || limit <= 0 {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
-	enc := json.NewEncoder(w)
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
 	for _, e := range f.entries {
-		if limit == 0 {
+		if limit == 0 || f.visible != nil && e.Timestamp.After(f.visible(now)) {
 			break
 		}
 		if !e.Timestamp.Before(since) {
@@ -116,10 +147,17 @@ func (f *fakeIndex) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			limit--
 		}
 	}
+	if f.cache != nil {
+		f.cache[r.URL.RequestURI()] = buf.Bytes()
+	}
+	w.Write(buf.Bytes())
 }
 
+// newIndexEnv returns an env whose feed has other clients' traffic and
+// whose Index has synced once and runs until stopIndex or the test ends.
 func newIndexEnv(t *testing.T, feed *fakeIndex) env {
 	t.Helper()
+	feed.startTraffic()
 	e := setupEnv(t, nil, feed)
 	if err := e.index.Sync(context.Background()); err != nil {
 		t.Fatal(err)
@@ -130,11 +168,33 @@ func newIndexEnv(t *testing.T, feed *fakeIndex) env {
 		e.index.Run(ctx)
 		close(done)
 	}()
-	t.Cleanup(func() {
+	e.stopIndex = func() {
 		cancel()
 		<-done
-	})
+	}
+	t.Cleanup(e.stopIndex)
 	return e
+}
+
+const behindMsg = "go index behind, judging by commit time"
+
+// assertFallbacks checks that the loads judged by commit time while the
+// index was in force were warned about, naming mods in order, and counted.
+func assertFallbacks(t *testing.T, logs *telemetrytest.Logs, before float64, mods ...string) {
+	t.Helper()
+	var warned []string
+	for _, l := range logs.Messages(t, behindMsg) {
+		if l["level"] == "WARN" {
+			m, _ := l["module"].(string)
+			warned = append(warned, m)
+		}
+	}
+	if !slices.Equal(warned, mods) {
+		t.Errorf("%s warnings name %q, want %q", behindMsg, warned, mods)
+	}
+	if d := telemetrytest.Value(t, "pkgwarden_go_index_fallbacks_total", nil) - before; d != float64(len(mods)) {
+		t.Errorf("pkgwarden_go_index_fallbacks_total grew by %v, want %d", d, len(mods))
+	}
 }
 
 func TestGoIndexCooldownCountsFromFirstSeen(t *testing.T) {
@@ -194,25 +254,64 @@ func TestGoIndexSeesTheFirstFetchThroughPkgwarden(t *testing.T) {
 	})
 }
 
+func TestGoIndexWaitsForTheFeedToReadPastTheFetch(t *testing.T) {
+	tests := []struct {
+		name    string
+		visible func(now time.Time) time.Time
+		cache   bool
+	}{
+		{"lagging feed", func(now time.Time) time.Time { return now.Add(-3 * time.Second) }, false},
+		{"feed published in batches behind a cache", func(now time.Time) time.Time { return now.Truncate(4 * time.Second) }, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			logs := telemetrytest.CaptureLogs(t)
+			fallbacks := telemetrytest.Value(t, "pkgwarden_go_index_fallbacks_total", nil)
+			feed := newFakeIndex()
+			feed.visible = tt.visible
+			if tt.cache {
+				feed.cache = map[string][]byte{}
+			}
+			feed.addOnFetch(fooBar, "v1.0.0")
+			e := newIndexEnv(t, feed)
+
+			// Fetch midway between two of the reads that come once a
+			// second, not in step with them.
+			time.Sleep(500 * time.Millisecond)
+			status, body := get(t, e.proxy.URL+"/go/example.com/!foo/bar/@v/v1.0.0.zip")
+			assertBlocked(t, status, body, "go/example.com/Foo/bar@v1.0.0", "cooldown", "first seen upstream")
+			assertFallbacks(t, logs, fallbacks)
+		})
+	}
+}
+
 func TestGoIndexBehindJudgesByCommitTime(t *testing.T) {
 	const zip = "example.com/!foo/bar/@v/v1.0.0.zip"
-	served := func(t *testing.T, e env) {
+	served := func(t *testing.T, e env) time.Duration {
 		t.Helper()
 		start := time.Now()
 		if status, body := get(t, e.proxy.URL+"/go/"+zip); status != http.StatusOK || body != string(zipBytes(zip)) {
 			t.Errorf("status %d body %q, want 200 by commit time", status, body)
 		}
-		if d := time.Since(start); d > 2*time.Second {
-			t.Errorf("request took %v waiting for the index", d)
-		}
+		return time.Since(start)
 	}
 
 	t.Run("not synced yet", func(t *testing.T) {
+		logs := telemetrytest.CaptureLogs(t)
+		fallbacks := telemetrytest.Value(t, "pkgwarden_go_index_fallbacks_total", nil)
 		feed := newFakeIndex()
 		feed.add(fooBar, "v1.0.0", time.Now().Add(-24*time.Hour))
-		served(t, setupEnv(t, nil, feed))
+		if d := served(t, setupEnv(t, nil, feed)); d > 2*time.Second {
+			t.Errorf("request took %v waiting for the index", d)
+		}
+		if n := len(logs.Messages(t, behindMsg)); n != 1 {
+			t.Errorf("%d %s lines, want 1 at debug", n, behindMsg)
+		}
+		assertFallbacks(t, logs, fallbacks)
 	})
 	t.Run("failing after a sync", func(t *testing.T) {
+		logs := telemetrytest.CaptureLogs(t)
+		fallbacks := telemetrytest.Value(t, "pkgwarden_go_index_fallbacks_total", nil)
 		feed := newFakeIndex()
 		feed.addOnFetch(fooBar, "v1.0.0")
 		e := setupEnv(t, nil, feed)
@@ -223,8 +322,70 @@ func TestGoIndexBehindJudgesByCommitTime(t *testing.T) {
 		if err := e.index.Sync(context.Background()); err == nil {
 			t.Fatal("Sync succeeded against a failing index")
 		}
-		served(t, e)
+		if d := served(t, e); d > 2*time.Second {
+			t.Errorf("request took %v waiting for the index", d)
+		}
+		assertFallbacks(t, logs, fallbacks, fooBar)
 	})
+	t.Run("feed stuck before the fetch", func(t *testing.T) {
+		logs := telemetrytest.CaptureLogs(t)
+		fallbacks := telemetrytest.Value(t, "pkgwarden_go_index_fallbacks_total", nil)
+		feed := newFakeIndex()
+		stuck := time.Now()
+		feed.visible = func(time.Time) time.Time { return stuck }
+		feed.addOnFetch(fooBar, "v1.0.0")
+		e := newIndexEnv(t, feed)
+		if d := served(t, e); d < 10*time.Second || d > 12*time.Second {
+			t.Errorf("request took %v, want the 10s the index gets to catch up", d)
+		}
+		assertFallbacks(t, logs, fallbacks, fooBar)
+	})
+}
+
+func TestGoIndexStopEndsEveryWait(t *testing.T) {
+	logs := telemetrytest.CaptureLogs(t)
+	fallbacks := telemetrytest.Value(t, "pkgwarden_go_index_fallbacks_total", nil)
+	feed := newFakeIndex()
+	stuck := time.Now()
+	feed.visible = func(time.Time) time.Time { return stuck }
+	e := newIndexEnv(t, feed)
+
+	const zip = "example.com/!foo/bar/@v/v1.0.0.zip"
+	status := make(chan int, 1)
+	go func() {
+		resp, err := http.Get(e.proxy.URL + "/go/" + zip)
+		if err != nil {
+			status <- 0
+			return
+		}
+		resp.Body.Close()
+		status <- resp.StatusCode
+	}()
+	for deadline := time.Now().Add(5 * time.Second); e.infoHits.Load() < 5; time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatalf("%d .info fetches after 5s, want the 5 listed versions", e.infoHits.Load())
+		}
+	}
+	time.Sleep(200 * time.Millisecond)
+
+	stopped := time.Now()
+	e.stopIndex()
+	if s := <-status; s != http.StatusOK {
+		t.Errorf("zip waiting at stop: status %d, want 200 by commit time", s)
+	}
+	if d := time.Since(stopped); d > 2*time.Second {
+		t.Errorf("zip waiting at stop returned %v after it, want at once", d)
+	}
+
+	start := time.Now()
+	p := "example.com/prerelease/@v/v0.1.0-alpha.1.zip"
+	if status, body := get(t, e.proxy.URL+"/go/"+p); status != http.StatusOK || body != string(zipBytes(p)) {
+		t.Errorf("zip after stop: status %d body %q, want 200 by commit time", status, body)
+	}
+	if d := time.Since(start); d > 2*time.Second {
+		t.Errorf("zip after stop took %v, want no wait", d)
+	}
+	assertFallbacks(t, logs, fallbacks, fooBar, "example.com/prerelease")
 }
 
 func TestGoIndexSyncReadsEveryPage(t *testing.T) {
@@ -237,23 +398,26 @@ func TestGoIndexSyncReadsEveryPage(t *testing.T) {
 	feed.add(fooBar, "v1.0.0", seen)
 	e := setupEnv(t, nil, feed)
 
-	// Fetching the .info before the Sync means the later zip has no newer
-	// fetch to wait for, since no Run loop is there to sync again.
+	// With the .info fetched before the Sync, and a version another client
+	// fetched after it in the feed, the Sync reads past that fetch, so the
+	// later zip needs no Run loop to sync again.
 	const zip = "example.com/!foo/bar/@v/v1.0.0.zip"
 	if status, _ := get(t, e.proxy.URL+"/go/"+zip); status != http.StatusOK {
 		t.Fatalf("zip before any sync: status %d, want 200 by commit time", status)
 	}
+	later := time.Now().Add(2 * time.Second)
+	feed.add("example.com/later", "v1.0.0", later)
 	if err := e.index.Sync(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if n := feed.count(); n != 2 {
-		t.Errorf("Sync sent %d requests for 2501 entries, want 2 pages", n)
+		t.Errorf("Sync sent %d requests for 2502 entries, want 2 pages", n)
 	}
-	if n := telemetrytest.Value(t, "pkgwarden_go_index_versions", nil); n != 2501 {
-		t.Errorf("pkgwarden_go_index_versions = %v, want 2501", n)
+	if n := telemetrytest.Value(t, "pkgwarden_go_index_versions", nil); n != 2502 {
+		t.Errorf("pkgwarden_go_index_versions = %v, want 2502", n)
 	}
-	if ts := telemetrytest.Value(t, "pkgwarden_go_index_last_success_timestamp_seconds", nil); ts < float64(start.Unix()) {
-		t.Errorf("pkgwarden_go_index_last_success_timestamp_seconds = %v, want at least %d", ts, start.Unix())
+	if ts := telemetrytest.Value(t, "pkgwarden_go_index_newest_entry_timestamp_seconds", nil); ts != float64(later.Unix()) {
+		t.Errorf("pkgwarden_go_index_newest_entry_timestamp_seconds = %v, want %d, the newest entry", ts, later.Unix())
 	}
 	status, body := get(t, e.proxy.URL+"/go/"+zip)
 	assertBlocked(t, status, body, "first seen upstream", seen.UTC().Format(time.RFC3339))

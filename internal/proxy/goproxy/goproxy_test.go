@@ -227,11 +227,12 @@ func fakeProxy(t *testing.T, requests, infoHits *atomic.Int64, feed *fakeIndex) 
 }
 
 type env struct {
-	proxy    *httptest.Server
-	reg      *goproxy.Registry
-	index    *goproxy.Index
-	requests *atomic.Int64
-	infoHits *atomic.Int64
+	proxy     *httptest.Server
+	reg       *goproxy.Registry
+	index     *goproxy.Index
+	stopIndex func()
+	requests  *atomic.Int64
+	infoHits  *atomic.Int64
 }
 
 const cooldown = 7 * 24 * time.Hour
