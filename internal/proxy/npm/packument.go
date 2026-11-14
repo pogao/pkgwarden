@@ -186,6 +186,20 @@ func (p *packument) filter(allowed func(string) bool, tarballBase, registryPath 
 	return b, true, err
 }
 
+// latest returns the version the latest tag names, or the highest version
+// when there is no latest tag.
+func (p *packument) latest() string {
+	latest := p.distTags["latest"]
+	if latest == "" {
+		for v := range p.versions {
+			if latest == "" || semver.Compare("v"+v, "v"+latest) > 0 {
+				latest = v
+			}
+		}
+	}
+	return latest
+}
+
 // withTarball returns the manifest with dist.tarball moved from the
 // upstream registry onto tarballBase, keeping the upstream path.
 func (m manifest) withTarball(tarballBase, registryPath string) (json.RawMessage, error) {

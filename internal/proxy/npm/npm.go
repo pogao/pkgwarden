@@ -9,8 +9,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 
-	"golang.org/x/mod/semver"
 	"golang.org/x/sync/semaphore"
 
 	"github.com/pogao/pkgwarden/internal/ecosystem"
@@ -36,13 +36,10 @@ type Registry struct {
 	o            Options
 	registryPath string
 	rewriting    *semaphore.Weighted
-}
 
-// rewriteBytes bounds the packument bytes being parsed and filtered at
-// once. Rewriting takes several times a document's size in memory, so
-// concurrent requests for a large package must not each rewrite it at the
-// same time. A larger document is rewritten alone.
-const rewriteBytes = 64 << 20
+	mu      sync.Mutex
+	flights map[rewriteKey]*flight
+}
 
 // New returns a Registry, filling in defaults for empty Options fields.
 func New(o Options) *Registry {
@@ -54,7 +51,7 @@ func New(o Options) *Registry {
 	}
 	o.Registry = strings.TrimSuffix(o.Registry, "/")
 	o.Downloads = strings.TrimSuffix(o.Downloads, "/")
-	r := &Registry{o: o, rewriting: semaphore.NewWeighted(rewriteBytes)}
+	r := &Registry{o: o, rewriting: semaphore.NewWeighted(rewriteBytes), flights: map[rewriteKey]*flight{}}
 	if u, err := url.Parse(o.Registry); err == nil {
 		r.registryPath = u.EscapedPath()
 	}
@@ -164,22 +161,6 @@ func (r *Registry) load(ctx context.Context, name string) (*snapshot, *policy.Pa
 	return snap, &pkg, nil
 }
 
-// rewrite parses the packument in raw and filters it with packument.filter,
-// waiting until the documents being rewritten fit in rewriteBytes.
-func (r *Registry) rewrite(ctx context.Context, raw []byte, allowed func(string) bool, tarballBase string) (*packument, []byte, bool, error) {
-	n := min(int64(len(raw)), rewriteBytes)
-	if err := r.rewriting.Acquire(ctx, n); err != nil {
-		return nil, nil, false, err
-	}
-	defer r.rewriting.Release(n)
-	p, err := parsePackument(raw)
-	if err != nil {
-		return nil, nil, false, err
-	}
-	body, ok, err := p.filter(allowed, tarballBase, r.registryPath)
-	return p, body, ok, err
-}
-
 func (r *Registry) weeklyDownloads(ctx context.Context, name string) int64 {
 	ctx, cancel := context.WithTimeout(ctx, proxy.DownloadsTimeout)
 	defer cancel()
@@ -214,24 +195,16 @@ func (r *Registry) filtered(w http.ResponseWriter, req *http.Request, name strin
 		return nil, nil, nil, false
 	}
 	tarballBase := proxy.BaseURL(req, r.o.PublicURL) + "/" + string(ecosystem.Npm)
-	p, body, ok, err := r.rewrite(ctx, snap.raw, a.Allowed, tarballBase)
+	rw, err := r.rewrite(ctx, snap, a.Allowed, tarballBase)
 	if err != nil {
 		proxy.WriteError(w, err)
 		return nil, nil, nil, false
 	}
-	if !ok {
-		latest := p.distTags["latest"]
-		if latest == "" {
-			for v := range p.versions {
-				if latest == "" || semver.Compare("v"+v, "v"+latest) > 0 {
-					latest = v
-				}
-			}
-		}
-		proxy.Enforce(ctx, w, proxy.JSON, proxy.StageMetadata, proxy.Subject{Ecosystem: ecosystem.Npm, Name: name, Version: latest}, a.Release(latest))
+	if !rw.ok {
+		proxy.Enforce(ctx, w, proxy.JSON, proxy.StageMetadata, proxy.Subject{Ecosystem: ecosystem.Npm, Name: name, Version: rw.latest}, a.Release(rw.latest))
 		return nil, nil, nil, false
 	}
-	return body, p.distTags, a, true
+	return rw.body, rw.distTags, a, true
 }
 
 // serveManifest answers GET /<name>/<version-or-tag> from the filtered
