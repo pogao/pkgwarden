@@ -167,6 +167,33 @@ func TestConcurrentPackumentRequestsShareOneRewrite(t *testing.T) {
 	}
 }
 
+func TestConcurrentManifestRequestsDoNotEachParseThePackument(t *testing.T) {
+	proxyURL, doc := bigProxy(t, 8<<10)
+	manifest := proxyURL + "/npm/big/1.7.0"
+	if code, err := send(manifest, "", io.Discard); err != nil || code != http.StatusOK {
+		t.Fatalf("first manifest request: status %d, error %v", code, err)
+	}
+	one := bytesAllocated(func() { send(manifest, "", io.Discard) })
+
+	const n = 16
+	allocated := bytesAllocated(func() {
+		var wg sync.WaitGroup
+		for range n {
+			wg.Go(func() {
+				if code, err := send(manifest, "", io.Discard); err != nil || code != http.StatusOK {
+					t.Errorf("status %d, error %v, want 200", code, err)
+				}
+			})
+		}
+		wg.Wait()
+	})
+
+	t.Logf("one manifest request allocated %d bytes, %d concurrent ones %d, for a %d-byte packument", one, n, allocated, len(doc))
+	if extra := (allocated - min(allocated, one)) / (n - 1); extra > uint64(len(doc))/4 {
+		t.Errorf("each of %d concurrent manifest requests beyond the first allocated %d bytes, more than a quarter of the %d-byte packument", n, extra, len(doc))
+	}
+}
+
 func TestConcurrentPackumentRequestsKeepTheirOwnTarballLinks(t *testing.T) {
 	proxyURL, _ := bigProxy(t, 1<<10)
 	packument := proxyURL + "/npm/big"
