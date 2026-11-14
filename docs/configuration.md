@@ -31,6 +31,8 @@ This is the output of `env -u GITHUB_TOKEN go run ./cmd/pkgwarden -h 2>&1` at th
 	    	debug, info, warn or error (default INFO)
 	  -low-downloads int
 	    	weekly downloads below this count as unpopular (default 100)
+	  -metadata-cache-bytes int
+	    	most bytes of upstream metadata the cache holds (0 disables it) (default 268435456)
 	  -metadata-ttl duration
 	    	how long upstream metadata is cached (default 5m0s)
 	  -metrics-listen string
@@ -46,7 +48,7 @@ This is the output of `env -u GITHUB_TOKEN go run ./cmd/pkgwarden -h 2>&1` at th
 	  -public-url string
 	    	externally visible base URL, used in rewritten download links (default: derived from each request)
 
-There are 19 flags. To count them, run this:
+There are 20 flags. To count them, run this:
 
 	go run ./cmd/pkgwarden -h 2>&1 | grep -c '^  -'
 
@@ -89,6 +91,7 @@ A command-line flag replaces the environment value. It does not add to it. `-all
 | `-listen` | string | `:8080` | `PKGWARDEN_LISTEN` |
 | `-log-level` | level | `info` | `PKGWARDEN_LOG_LEVEL` |
 | `-low-downloads` | int | `100` | `PKGWARDEN_LOW_DOWNLOADS` |
+| `-metadata-cache-bytes` | int | `268435456` (256 MiB) | `PKGWARDEN_METADATA_CACHE_BYTES` |
 | `-metadata-ttl` | duration | `5m0s` | `PKGWARDEN_METADATA_TTL` |
 | `-metrics-listen` | string | empty, `/metrics` is served on `-listen` | `PKGWARDEN_METRICS_LISTEN` |
 | `-new-package-age` | duration | `720h0m0s` | `PKGWARDEN_NEW_PACKAGE_AGE` |
@@ -127,7 +130,13 @@ The lowest level that reaches the log. Use `debug`, `info`, `warn`, or `error`. 
 
 ### `-metadata-ttl`
 
-How long pkgwarden caches each upstream metadata document, such as a packument, an index file, a version list, or a download count. The cache holds at most 512 documents. `0` or a negative value turns the cache off, but concurrent requests for one document still share one upstream request. Go publish times from `.info` files have their own 24-hour cache, which this flag does not change.
+How long pkgwarden caches each upstream metadata document, such as a packument, an index file, a version list, or a download count. pkgwarden frees a document when it expires. `0` or a negative value turns the cache off, but concurrent requests for one document still share one upstream request. Go publish times from `.info` files have their own 24-hour cache, which this flag does not change.
+
+### `-metadata-cache-bytes`
+
+The most memory, in bytes, that the metadata cache holds. Each document counts as its size plus about 256 bytes. An npm packument also counts about 256 bytes for each version, for the facts that pkgwarden parses from it. When a new document does not fit, pkgwarden drops arbitrary cached documents until it does. A dropped document leaves memory once no request in progress uses it. pkgwarden never caches a document that counts more than half the budget, so one document cannot empty the cache. pkgwarden fetches such a document again for every request, and concurrent requests for it still share one fetch. `0` or a negative value turns the cache off.
+
+The default of 256 MiB holds the largest packument in common use, renovate at about 75 MB, along with many smaller documents. A budget below about 150 MiB leaves renovate out, and then every download of such a package fetches and parses its packument again. To size the container around the budget, see [Give it enough memory](deployment.md#give-it-enough-memory).
 
 ## Policy flags
 

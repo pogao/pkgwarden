@@ -8,10 +8,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
-	"path"
 	"strings"
+	"sync"
 
-	"golang.org/x/mod/semver"
+	"golang.org/x/sync/semaphore"
 
 	"github.com/pogao/pkgwarden/internal/ecosystem"
 	"github.com/pogao/pkgwarden/internal/policy"
@@ -35,6 +35,10 @@ type Options struct {
 type Registry struct {
 	o            Options
 	registryPath string
+	rewriting    *semaphore.Weighted
+
+	mu      sync.Mutex
+	flights map[rewriteKey]*flight
 }
 
 // New returns a Registry, filling in defaults for empty Options fields.
@@ -47,7 +51,7 @@ func New(o Options) *Registry {
 	}
 	o.Registry = strings.TrimSuffix(o.Registry, "/")
 	o.Downloads = strings.TrimSuffix(o.Downloads, "/")
-	r := &Registry{o: o}
+	r := &Registry{o: o, rewriting: semaphore.NewWeighted(rewriteBytes), flights: map[rewriteKey]*flight{}}
 	if u, err := url.Parse(o.Registry); err == nil {
 		r.registryPath = u.EscapedPath()
 	}
@@ -143,37 +147,18 @@ func parseRoute(p string) (route, bool) {
 	return route{}, false
 }
 
-// version returns the version whose dist.tarball has the requested file
-// name. Old npm clients named the file after the unnormalized version, so
-// express-3.0.0rc3.tgz belongs to 3.0.0-rc3. Failing that, it extracts the
-// version from a file name such as widget-1.2.3.tgz. A name that does not
-// fit yields a string no release matches, so the policy blocks it as
-// unknown.
-func (rt route) version(p *packument) string {
-	for v, m := range p.versions {
-		var tarball string
-		if json.Unmarshal(m.dist["tarball"], &tarball) == nil && path.Base(tarball) == rt.file {
-			return v
-		}
-	}
-	unscoped := rt.name[strings.LastIndex(rt.name, "/")+1:]
-	v, _ := strings.CutPrefix(strings.TrimSuffix(rt.file, ".tgz"), unscoped+"-")
-	return v
-}
-
-func (r *Registry) load(ctx context.Context, name string) (*packument, *policy.Package, error) {
+func (r *Registry) load(ctx context.Context, name string) (*snapshot, *policy.Package, error) {
 	downloads := make(chan int64, 1)
 	go func() { downloads <- r.weeklyDownloads(ctx, name) }()
 	// The abbreviated install-v1 document lacks time and _npmUser.
-	b, err := r.o.HTTP.Fetch(ctx, r.o.Registry+"/"+url.PathEscape(name), http.Header{"Accept": {"application/json"}})
+	snap, err := proxy.FetchParsed(ctx, r.o.HTTP, r.o.Registry+"/"+url.PathEscape(name), http.Header{"Accept": {"application/json"}},
+		func(b []byte) (*snapshot, int64, error) { return parseSnapshot(name, b) })
 	if err != nil {
 		return nil, nil, err
 	}
-	p, err := parsePackument(b)
-	if err != nil {
-		return nil, nil, err
-	}
-	return p, p.policyPackage(name, <-downloads), nil
+	pkg := snap.pkg
+	pkg.WeeklyDownloads = <-downloads
+	return snap, &pkg, nil
 }
 
 func (r *Registry) weeklyDownloads(ctx context.Context, name string) int64 {
@@ -189,71 +174,65 @@ func (r *Registry) weeklyDownloads(ctx context.Context, name string) int64 {
 }
 
 func (r *Registry) servePackument(w http.ResponseWriter, req *http.Request, name string) {
-	if body, _, _, ok := r.filtered(w, req, name); ok {
+	if rw, _, ok := r.filtered(w, req, name); ok {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write(body)
+		w.Write(rw.body)
 	}
 }
 
-// filtered returns the packument with blocked versions removed, along with
-// the upstream dist-tags. When it returns false it has already written the
-// response.
-func (r *Registry) filtered(w http.ResponseWriter, req *http.Request, name string) ([]byte, map[string]string, *policy.Assessment, bool) {
-	p, pkg, err := r.load(req.Context(), name)
+// filtered returns the packument with blocked versions removed. When it
+// returns false it has already written the response.
+func (r *Registry) filtered(w http.ResponseWriter, req *http.Request, name string) (*rewritten, *policy.Assessment, bool) {
+	snap, pkg, err := r.load(req.Context(), name)
 	if err != nil {
 		proxy.WriteError(w, err)
-		return nil, nil, nil, false
+		return nil, nil, false
 	}
 	ctx := req.Context()
 	a := r.o.Engine.Assess(ctx, pkg)
 	if !proxy.Enforce(ctx, w, proxy.JSON, proxy.StageMetadata, proxy.Subject{Ecosystem: ecosystem.Npm, Name: name}, a.Package) {
-		return nil, nil, nil, false
+		return nil, nil, false
 	}
 	tarballBase := proxy.BaseURL(req, r.o.PublicURL) + "/" + string(ecosystem.Npm)
-	body, ok, err := p.filter(a.Allowed, tarballBase, r.registryPath)
+	rw, err := r.rewrite(ctx, snap, a.Allowed, tarballBase)
 	if err != nil {
 		proxy.WriteError(w, err)
-		return nil, nil, nil, false
+		return nil, nil, false
 	}
-	if !ok {
-		latest := p.distTags["latest"]
-		if latest == "" {
-			for v := range p.versions {
-				if latest == "" || semver.Compare("v"+v, "v"+latest) > 0 {
-					latest = v
-				}
-			}
-		}
-		proxy.Enforce(ctx, w, proxy.JSON, proxy.StageMetadata, proxy.Subject{Ecosystem: ecosystem.Npm, Name: name, Version: latest}, a.Release(latest))
-		return nil, nil, nil, false
+	if !rw.ok {
+		proxy.Enforce(ctx, w, proxy.JSON, proxy.StageMetadata, proxy.Subject{Ecosystem: ecosystem.Npm, Name: name, Version: rw.latest}, a.Release(rw.latest))
+		return nil, nil, false
 	}
-	return body, p.distTags, a, true
+	return rw, a, true
 }
 
 // serveManifest answers GET /<name>/<version-or-tag> from the filtered
 // packument, so the manifest's tarball link also points at the proxy.
 func (r *Registry) serveManifest(w http.ResponseWriter, req *http.Request, rt route) {
-	body, upstreamTags, a, ok := r.filtered(w, req, rt.name)
+	rw, a, ok := r.filtered(w, req, rt.name)
 	if !ok {
 		return
 	}
-	var doc struct {
-		DistTags map[string]string          `json:"dist-tags"`
-		Versions map[string]json.RawMessage `json:"versions"`
-	}
-	if err := json.Unmarshal(body, &doc); err != nil {
-		proxy.WriteError(w, err)
-		return
+	var tags map[string]string
+	if rw.tags != nil {
+		if err := json.Unmarshal(rw.tags, &tags); err != nil {
+			proxy.WriteError(w, err)
+			return
+		}
 	}
 	v := rt.spec
-	if tagged, ok := doc.DistTags[v]; ok {
+	if tagged, ok := tags[v]; ok {
 		v = tagged
-	} else if tagged, ok := upstreamTags[v]; ok {
+	} else if tagged, ok := rw.upstreamTags[v]; ok {
 		// Filtering dropped the tag because its target is blocked, so the
 		// 403 reports the target's verdict.
 		v = tagged
 	}
-	m, found := doc.Versions[v]
+	m, found, err := rw.manifest(v)
+	if err != nil {
+		proxy.WriteError(w, err)
+		return
+	}
 	if !found {
 		// Missing from the filtered document means blocked or unpublished,
 		// and the verdict says which.
@@ -266,29 +245,20 @@ func (r *Registry) serveManifest(w http.ResponseWriter, req *http.Request, rt ro
 
 // serveDistTags answers npm dist-tag ls with the filtered packument's tags.
 func (r *Registry) serveDistTags(w http.ResponseWriter, req *http.Request, name string) {
-	body, _, _, ok := r.filtered(w, req, name)
-	if !ok {
-		return
+	if rw, _, ok := r.filtered(w, req, name); ok {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(rw.tags)
 	}
-	var doc struct {
-		DistTags json.RawMessage `json:"dist-tags"`
-	}
-	if err := json.Unmarshal(body, &doc); err != nil {
-		proxy.WriteError(w, err)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.Write(doc.DistTags)
 }
 
 func (r *Registry) serveTarball(w http.ResponseWriter, req *http.Request, rt route) {
 	ctx := req.Context()
-	p, pkg, err := r.load(ctx, rt.name)
+	snap, pkg, err := r.load(ctx, rt.name)
 	if err != nil {
 		proxy.WriteError(w, err)
 		return
 	}
-	s := proxy.Subject{Ecosystem: ecosystem.Npm, Name: rt.name, Version: rt.version(p)}
+	s := proxy.Subject{Ecosystem: ecosystem.Npm, Name: rt.name, Version: snap.version(rt)}
 	a := r.o.Engine.Assess(ctx, pkg)
 	if !proxy.Enforce(ctx, w, proxy.JSON, proxy.StageArtifact, s, a.Release(s.Version)) {
 		return

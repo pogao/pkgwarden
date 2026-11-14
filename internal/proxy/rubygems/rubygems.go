@@ -63,7 +63,7 @@ func New(o Options) *Registry {
 		r.upstream = "https://rubygems.org"
 	}
 	if r.http == nil {
-		r.http = proxy.NewUpstream(http.DefaultClient, "pkgwarden", time.Minute)
+		r.http = proxy.NewUpstream(http.DefaultClient, "pkgwarden", time.Minute, 64<<20)
 	}
 	r.mux.HandleFunc("GET /info/{name}", r.serveInfo)
 	r.mux.HandleFunc("GET /gems/{file}", r.serveArtifact(".gem", true))

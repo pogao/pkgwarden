@@ -29,7 +29,7 @@ func TestFetchCountsCacheHitsAndLogsThem(t *testing.T) {
 	miss := map[string]string{"cache": "metadata", "result": "miss"}
 	hits, misses := telemetrytest.Value(t, "pkgwarden_cache_requests_total", hit), telemetrytest.Value(t, "pkgwarden_cache_requests_total", miss)
 	logs := telemetrytest.CaptureLogs(t)
-	u := NewUpstream(&http.Client{Transport: roundTripFunc(okResponse)}, "pkgwarden-test", time.Minute)
+	u := NewUpstream(&http.Client{Transport: roundTripFunc(okResponse)}, "pkgwarden-test", time.Minute, 64<<20)
 
 	for _, id := range []string{"first", "second"} {
 		if _, err := u.Fetch(telemetry.WithRequestID(context.Background(), id), url, nil); err != nil {
@@ -57,7 +57,7 @@ func TestFetchLogsJoinedInFlightFetch(t *testing.T) {
 			calls++
 			<-release
 			return okResponse(r)
-		})}, "pkgwarden-test", time.Minute)
+		})}, "pkgwarden-test", time.Minute, 64<<20)
 		logs := telemetrytest.CaptureLogs(t)
 
 		var wg sync.WaitGroup
@@ -91,7 +91,7 @@ func TestFetchSurvivesCancelOfTheRequestThatStartedIt(t *testing.T) {
 			case <-r.Context().Done():
 				return nil, r.Context().Err()
 			}
-		})}, "pkgwarden-test", time.Minute)
+		})}, "pkgwarden-test", time.Minute, 64<<20)
 		const url = "https://registry.example/left-pad"
 
 		leaderCtx, cancel := context.WithCancel(context.Background())
@@ -133,7 +133,7 @@ func TestFetchGivesUpOnAHungUpstream(t *testing.T) {
 		u := NewUpstream(&http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 			<-r.Context().Done()
 			return nil, r.Context().Err()
-		})}, "pkgwarden-test", time.Minute)
+		})}, "pkgwarden-test", time.Minute, 64<<20)
 
 		start := time.Now()
 		_, err := u.Fetch(context.Background(), "https://registry.example/left-pad", nil)
@@ -142,4 +142,61 @@ func TestFetchGivesUpOnAHungUpstream(t *testing.T) {
 			t.Errorf("hung fetch returned %v after %v, want a deadline error after %v", err, time.Since(start), fetchTimeout)
 		}
 	})
+}
+
+func TestFetchParsedSharesOneParseAndCachesIt(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		release := make(chan struct{})
+		calls, parses := 0, 0
+		u := NewUpstream(&http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			calls++
+			<-release
+			return okResponse(r)
+		})}, "pkgwarden-test", time.Minute, 64<<20)
+		parse := func(b []byte) (string, int64, error) {
+			parses++
+			return "parsed " + string(b), int64(len(b)), nil
+		}
+		const url = "https://registry.example/left-pad"
+		fetch := func() {
+			if v, err := FetchParsed(context.Background(), u, url, nil, parse); err != nil || v != "parsed {}" {
+				t.Errorf("FetchParsed = %q, %v; want the parsed body", v, err)
+			}
+		}
+
+		var wg sync.WaitGroup
+		for range 4 {
+			wg.Go(fetch)
+		}
+		synctest.Wait()
+		close(release)
+		wg.Wait()
+		fetch()
+
+		if calls != 1 || parses != 1 {
+			t.Errorf("%d upstream calls and %d parses for five fetches, want one of each", calls, parses)
+		}
+		if b, err := u.Fetch(context.Background(), url, nil); err != nil || string(b) != `{}` {
+			t.Errorf("Fetch after FetchParsed = %q, %v; want the body", b, err)
+		}
+	})
+}
+
+func TestDocumentOverHalfTheCacheBudgetIsNotCached(t *testing.T) {
+	bodies := map[string]string{"/small": `{}`, "/large": strings.Repeat("x", 600)}
+	calls := map[string]int{}
+	u := NewUpstream(&http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		calls[r.URL.Path]++
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(bodies[r.URL.Path]))}, nil
+	})}, "pkgwarden-test", time.Minute, 1000)
+
+	for _, path := range []string{"/small", "/large", "/small", "/large"} {
+		if b, err := u.Fetch(context.Background(), "https://registry.example"+path, nil); err != nil || string(b) != bodies[path] {
+			t.Fatalf("Fetch %s = %d bytes, %v", path, len(b), err)
+		}
+	}
+
+	if calls["/small"] != 1 || calls["/large"] != 2 {
+		t.Errorf("upstream calls %v, want the small document cached and the large one fetched each time", calls)
+	}
 }

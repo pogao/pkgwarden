@@ -42,27 +42,66 @@ const fetchTimeout = 2 * time.Minute
 const DownloadsTimeout = 5 * time.Second
 
 // Upstream fetches from upstream registries. Metadata fetched through Fetch
-// is cached briefly and concurrent identical requests share one round trip.
-// Artifacts go through Open and are never cached, and neither are POSTs.
+// or FetchParsed is cached briefly and concurrent identical requests share
+// one round trip. Artifacts go through Open and are never cached, and
+// neither are POSTs.
 type Upstream struct {
 	client    *http.Client
 	userAgent string
-	meta      *cache.TTL[string, []byte]
+	meta      *cache.TTL[string, document]
 	group     singleflight.Group
 }
 
-// NewUpstream returns an Upstream that caches metadata for metaTTL.
-func NewUpstream(client *http.Client, userAgent string, metaTTL time.Duration) *Upstream {
-	return &Upstream{client: client, userAgent: userAgent, meta: cache.New[string, []byte](metaTTL, 512)}
+// document is a cached metadata body, or what a FetchParsed caller made of
+// it, with its size in bytes.
+type document struct {
+	v    any
+	size int64
+}
+
+// entryOverhead approximates what the cache spends on an entry besides its
+// key and value, so that tiny documents still count against the budget.
+const entryOverhead = 256
+
+// NewUpstream returns an Upstream that caches metadata for metaTTL, holding
+// at most cacheBytes of it.
+func NewUpstream(client *http.Client, userAgent string, metaTTL time.Duration, cacheBytes int64) *Upstream {
+	meta := cache.NewWeighted(metaTTL, cacheBytes, func(key string, d document) int64 {
+		return int64(len(key)) + d.size + entryOverhead
+	})
+	return &Upstream{client: client, userAgent: userAgent, meta: meta}
 }
 
 // Fetch returns the body of a metadata document. A 404 or 410 yields ErrNotFound.
 func (u *Upstream) Fetch(ctx context.Context, url string, header http.Header) ([]byte, error) {
-	key := header.Get("Accept") + " " + url
-	if b, ok := u.meta.Get(key); ok {
+	v, err := u.fetch(ctx, header.Get("Accept")+" "+url, url, header, func(b []byte) (any, int64, error) {
+		return b, int64(len(b)), nil
+	})
+	b, _ := v.([]byte)
+	return b, err
+}
+
+// FetchParsed is Fetch for a document that callers use only in parsed
+// form. It caches parse's result in place of the body. parse runs once for
+// each download, shared by concurrent callers, and returns the size in bytes
+// of what it made. Every caller must parse a URL and Accept header the same
+// way.
+func FetchParsed[T any](ctx context.Context, u *Upstream, url string, header http.Header, parse func([]byte) (T, int64, error)) (T, error) {
+	v, err := u.fetch(ctx, "parsed "+header.Get("Accept")+" "+url, url, header, func(b []byte) (any, int64, error) {
+		return parse(b)
+	})
+	if err != nil {
+		var zero T
+		return zero, err
+	}
+	return v.(T), nil
+}
+
+func (u *Upstream) fetch(ctx context.Context, key, url string, header http.Header, parse func([]byte) (any, int64, error)) (any, error) {
+	if d, ok := u.meta.Get(key); ok {
 		telemetry.RecordCache("metadata", true)
 		slog.DebugContext(ctx, "metadata cache hit", "url", url)
-		return b, nil
+		return d.v, nil
 	}
 	telemetry.RecordCache("metadata", false)
 	fetched := false
@@ -87,8 +126,12 @@ func (u *Upstream) Fetch(ctx context.Context, url string, header http.Header) ([
 		if err != nil {
 			return nil, fmt.Errorf("GET %s: %w", url, err)
 		}
-		u.meta.Set(key, b)
-		return b, nil
+		v, size, err := parse(b)
+		if err != nil {
+			return nil, err
+		}
+		u.meta.Set(key, document{v: v, size: size})
+		return v, nil
 	})
 	var res singleflight.Result
 	select {
@@ -101,10 +144,7 @@ func (u *Upstream) Fetch(ctx context.Context, url string, header http.Header) ([
 		// request that started it.
 		slog.DebugContext(ctx, "joined in-flight fetch", "url", url)
 	}
-	if res.Err != nil {
-		return nil, res.Err
-	}
-	return res.Val.([]byte), nil
+	return res.Val, res.Err
 }
 
 // FetchJSON fetches a metadata document and decodes it into v.

@@ -30,6 +30,10 @@ To run every unit test with the race detector, run this from the repository root
 
 	go test -race ./...
 
+The race detector's own allocations swamp the npm memory tests' byte budgets, so those tests skip their byte checks under `-race`. To check the budgets too, run the tests once without it:
+
+	go test ./...
+
 The unit tests run against local test servers and recorded upstream responses in the `testdata/` directories.
 
 To run one package's tests, name the package:
