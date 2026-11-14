@@ -260,4 +260,4 @@ A direct download gets the 403 with the reason:
 
 ## Warnings
 
-A release with a `warn` verdict installs normally. No client shows the warning. pkgwarden sends it in the `X-Pkgwarden-Warning` response header and logs it as `serving with warnings`. See [Read the logs](deployment.md#read-the-logs).
+A release with a `warn` verdict installs normally. No client shows the warning. pkgwarden sends the first few reasons in the `X-Pkgwarden-Warning` response header and logs every reason as `serving with warnings`. See [Read the logs](deployment.md#read-the-logs).

@@ -122,7 +122,7 @@ pkgwarden logs these messages:
 | `shutting down` | INFO | pkgwarden got `SIGINT` or `SIGTERM`. It stops accepting connections and exits once the requests in progress finish. See [Stop it](#stop-it). | `signal` |
 | `exiting` | ERROR | pkgwarden stopped because of an error. | `err` |
 
-`version` is left out of `blocked` and `serving with warnings` when the verdict covers the whole package. `stage` is `metadata` or `artifact`, as in [Label values](observability.md#label-values). `rules` lists each rule behind the decision once. `reasons` holds the findings at the verdict's decision, as `<rule>: <reason>` joined with `; `. Unlike the 403 body, it is not shortened. `findings` holds the full finding objects.
+`version` is left out of `blocked` and `serving with warnings` when the verdict covers the whole package. `stage` is `metadata` or `artifact`, as in [Label values](observability.md#label-values). `rules` lists each rule behind the decision once. `reasons` holds the findings at the verdict's decision, as `<rule>: <reason>` joined with `; `. Unlike the 403 body and the `X-Pkgwarden-Warning` header, it is not shortened. `findings` holds the full finding objects.
 
 These lines were captured on 2026-11-07. The long ones are trimmed with `...`:
 
