@@ -149,7 +149,7 @@ The minimum age a release must reach before pkgwarden serves it. `0` turns the c
 
 ### `-go-index`
 
-Measures the age of a Go release from the later of its commit time and the time `proxy.golang.org` first served it, which a module author cannot backdate. pkgwarden reads the first-seen times from `https://index.golang.org/index` in the background. With a 7-day cooldown, the first read took 212 requests, 56.5 MB, and about 7 minutes in one test, and it raised resident memory by about 100 MB. Until that first read finishes, and whenever the index fails, Go releases are judged by their commit time, as without the flag. With `-cooldown 0` the flag does nothing. See [Go: measure from the first-seen time](cooldown.md#go-measure-from-the-first-seen-time).
+Measures the age of a Go release from the later of its commit time and the time `proxy.golang.org` first served it, which a module author cannot backdate. pkgwarden reads the first-seen times from `https://index.golang.org/index` in the background. With a 7-day cooldown, the first read took 212 requests, 56.5 MB, and about 7 minutes in one test, and it raised resident memory by about 100 MB. A request that fetches a `.info` file waits a few seconds, 10 at most, for the feed to show versions first served after that fetch. Until that first read finishes, when the index fails, and when the feed does not catch up within the 10 seconds, Go releases are judged by their commit time, as without the flag. With `-cooldown 0` the flag does nothing. See [Go: measure from the first-seen time](cooldown.md#go-measure-from-the-first-seen-time).
 
 ### `-block-severity`
 

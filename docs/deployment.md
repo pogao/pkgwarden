@@ -133,8 +133,8 @@ pkgwarden logs these messages:
 | `artifact relay interrupted` | WARN | Copying a package file to the client failed partway, such as when the client disconnected. | `ecosystem`, `package`, `version`, `bytes`, `err` |
 | `advisory dataset refresh failed` | ERROR | An OpenSSF download or parse failed. The previous index stays in use, and pkgwarden retries with backoff. | `source`, `err` |
 | `go index synced` | INFO | The first read of the Go module index reached the end of the feed, so first-seen times are now in force. Logged once. | `versions`, `pages`, `duration` |
-| `go index sync failed` | ERROR | A read of the Go module index failed. Go releases are judged by their commit time until a read succeeds, 30 seconds later at the earliest. | `err` |
-| `go index behind, judging by commit time` | DEBUG | A Go request did not get a read of the module index that covers it, because the first read has not finished, the last read failed, or the extra read took more than 10 seconds. | `module` |
+| `go index sync failed` | ERROR | A read of the Go module index failed. Go releases whose `.info` files pkgwarden fetches after the last successful read are judged by their commit time until a read succeeds, 30 seconds later at the earliest. | `err` |
+| `go index behind, judging by commit time` | WARN, DEBUG until the first read of the index finishes | A Go request was judged by commit time because pkgwarden had not read the module index past its `.info` fetch. At WARN, the feed did not catch up within 10 seconds, the last read failed, or pkgwarden was shutting down, and `pkgwarden_go_index_fallbacks_total` counts the request. `index_newest` is the time of the newest entry read. | `module`, and `index_newest` at WARN |
 | `metadata cache hit` | DEBUG | pkgwarden answered a metadata fetch from its cache, with no upstream call. | `url` |
 | `joined in-flight fetch` | DEBUG | A metadata fetch shared the upstream call that another request started. That call's `upstream` line carries the other request's ID. | `url` |
 | `advisory cache hit` | DEBUG | pkgwarden answered an advisory lookup from its cache, with no upstream call. | `ecosystem`, `package` |

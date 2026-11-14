@@ -78,8 +78,10 @@ The version list through pkgwarden was empty, `@latest` and the `.zip` got 403 w
 
 1. At startup, a background task reads the feed from `-cooldown` ago up to now, 2000 entries per request. It keeps each module version with its first-seen time in memory. pkgwarden serves requests from the start.
 2. When that first read reaches the end of the feed, pkgwarden logs `go index synced` with the number of versions it holds, the number of requests, and the time it took.
-3. After that, the task reads new entries every 30 seconds. It drops entries first seen more than `-cooldown` ago, since they can no longer block anything.
-4. A version that nobody has fetched has no entry yet. pkgwarden's own `.info` request is what makes `proxy.golang.org` fetch it, and the proxy adds the entry before it answers. So before pkgwarden judges a version whose `.info` file it fetched after the last read of the feed began, it asks for one more read and waits up to 10 seconds for it. The task reads at most once a second, so this adds at most about a second to the first request for a module. In one test the extra read took 65 milliseconds, and it found the entry that pkgwarden's own request had created.
+3. After that, the task reads new entries every 30 seconds. It drops entries first seen more than `-cooldown` ago, since they can no longer block anything. Each request carries a `nonce` parameter of its own. The index lets shared caches answer a repeated URL for up to 5 minutes, and a read that finds nothing new would otherwise repeat its URL and get that stale answer.
+4. A version that nobody has fetched has no entry yet. pkgwarden's own `.info` request is what makes `proxy.golang.org` fetch it. The proxy stamps the entry with a time just before it answers, but the entry shows up in the feed only some seconds later. The feed grows in time order, so pkgwarden holds every version first served up to the newest entry it has read. Before pkgwarden judges a version whose `.info` file it fetched, it waits until that newest entry is at least a second later than the fetch. While a request waits, the task reads at most once a second, and the request waits at most 10 seconds. On 2026-11-14, twelve first fetches of never-fetched versions through pkgwarden waited 2.2 to 9.6 seconds after the `.info` answer, and each found the entry that pkgwarden's own request had created.
+
+pkgwarden compares the feed's time with its own clock, so keep the host clock synchronized. The extra second covers a clock that runs up to a second behind. A clock that runs ahead makes these requests wait longer, up to the 10 seconds.
 
 ### What it costs
 
@@ -96,19 +98,22 @@ These numbers come from one start with the default 7-day cooldown on 2026-11-14.
 
 After the first read, pkgwarden sends one small request every 30 seconds, plus at most one a second while requests for newly fetched versions wait. The time and the memory grow with `-cooldown`. The data lives only in memory, so every restart reads the feed again.
 
+The wait in step 4 applies to every `.info` file pkgwarden fetches, not only to new versions. So the first request for a module, and for any version whose `.info` time pkgwarden has not cached in the last 24 hours, takes a few seconds longer than without the flag.
+
 ### When the index cannot answer
 
 The index never makes a Go install fail, and it delays a request by at most 10 seconds. In these cases pkgwarden judges the release by its `.info` time alone, as without the flag:
 
 - Until the first read reaches the end of the feed.
 - While the last read of the feed failed. A read tries a failed request once more before it fails. pkgwarden then logs `go index sync failed` and reads again 30 seconds later.
-- When the extra read for a newly fetched version takes longer than 10 seconds.
+- When the newest entry read is still not a second past the `.info` fetch after 10 seconds. In a 12-minute watch of the feed on 2026-11-14, the newest entry was 2.7 seconds old at the median and more than 9 seconds old in 22 of 240 reads, with a maximum of 24 seconds. So some first fetches end up in this case.
+- While pkgwarden shuts down.
 
-`pkgwarden_go_index_last_success_timestamp_seconds` stays `0` until the first read finishes. See [Metrics and request tracing](observability.md).
+Until the first read finishes, pkgwarden logs `go index behind, judging by commit time` at debug level. In the other three cases it logs that message at warning level with the module, and it counts the request in `pkgwarden_go_index_fallbacks_total`. `pkgwarden_go_index_newest_entry_timestamp_seconds` stays `0` until the first read finishes. See [Metrics and request tracing](observability.md).
 
 ### What remains
 
-- In the three cases above, a new tag on an old commit passes the cooldown at once, as it does without the flag.
+- In the cases above, a new tag on an old commit passes the cooldown at once, as it does without the flag. A version first fetched while the feed lags is judged by its commit time until the feed catches up. The next request for the module after that finds its entry and blocks it, but the file served before is already out.
 - An old version that the proxy serves for the first time waits out the cooldown like a new release. This happens to an old commit fetched by its hash, a tag in a fork, and a module path spelled with different capitalization.
 - The [heuristics](heuristics.md) still use the `.info` time.
 - With `-cooldown 0`, `-go-index` reads nothing.

@@ -27,9 +27,10 @@ Every pkgwarden series starts with `pkgwarden_`. No metric has a package name or
 | `pkgwarden_openssf_last_success_timestamp_seconds` | gauge | none | Unix time of the last successful OpenSSF dataset load. `0` until the first load, and always `0` without `-openssf`. |
 | `pkgwarden_openssf_packages` | gauge | none | Packages in the loaded OpenSSF index. |
 | `pkgwarden_openssf_refresh_failures_total` | counter | none | Failed OpenSSF dataset refreshes. A refresh cut short by shutdown is not counted. |
-| `pkgwarden_go_index_last_success_timestamp_seconds` | gauge | none | Unix time at which the last successful read of the Go module index started its final request. Every version first served before it is known. `0` until the first read reaches the end of the feed, and always `0` without `-go-index`. |
+| `pkgwarden_go_index_newest_entry_timestamp_seconds` | gauge | none | Unix time of the newest entry pkgwarden has read from the Go module index, by the index's clock. pkgwarden knows every version first served up to that time. A request that fetches a `.info` file waits until this is a second past the fetch, for at most 10 seconds. Updated after each successful read. `0` until the first read reaches the end of the feed, and always `0` without `-go-index`. |
 | `pkgwarden_go_index_versions` | gauge | none | Module versions held from the Go module index. pkgwarden drops the versions first served more than `-cooldown` ago at most once every 30 seconds. |
 | `pkgwarden_go_index_sync_failures_total` | counter | none | Failed reads of the Go module index. A read cut short by shutdown is not counted. |
+| `pkgwarden_go_index_fallbacks_total` | counter | none | Go requests judged by commit time after the first read of the Go module index finished, because the index had not been read past their `.info` fetches: the feed did not catch up within 10 seconds, the last read failed, or pkgwarden was shutting down. Each one also logs `go index behind, judging by commit time` at warning level. |
 | `pkgwarden_policy_info` | gauge | `cooldown`, `block_severity`, `fail_open`, `heuristics`, `heuristics_warn`, `heuristics_block` | Always `1`. The labels hold the policy flags the process started with. |
 | `pkgwarden_build_info` | gauge | `version`, `go_version` | Always `1`. `version` is the `VERSION` build argument for an image built by the `Dockerfile`, or `(devel)` when the build sets none. A binary built by `go build` in a git checkout reports the module version from the Go build information, such as `v0.0.0-20261107233310-f009d03e5c9d`. `go run` stamps no version control information, so it reports `(devel)`. |
 
@@ -85,8 +86,9 @@ Each query answers one question a security engineer asks about a running proxy.
 | Is the OpenSSF index older than 12 hours, on instances that use it? | `(time() - pkgwarden_openssf_last_success_timestamp_seconds > 12 * 3600) and on (instance) pkgwarden_advisory_source_enabled{source="openssf"} == 1` |
 | Did the OpenSSF index shrink? | `delta(pkgwarden_openssf_packages[1d]) < 0` |
 | Are OpenSSF refreshes failing? | `increase(pkgwarden_openssf_refresh_failures_total[1h]) > 0` |
-| Has the Go module index fallen more than 5 minutes behind, after its first read? | `pkgwarden_go_index_last_success_timestamp_seconds > 0 and time() - pkgwarden_go_index_last_success_timestamp_seconds > 300` |
-| Are Go module index reads failing, so that Go releases are judged by commit time? | `increase(pkgwarden_go_index_sync_failures_total[15m]) > 0` |
+| Has the Go module index fallen more than 5 minutes behind, after its first read, by the feed's own time? | `pkgwarden_go_index_newest_entry_timestamp_seconds > 0 and time() - pkgwarden_go_index_newest_entry_timestamp_seconds > 300` |
+| Are Go module index reads failing? | `increase(pkgwarden_go_index_sync_failures_total[15m]) > 0` |
+| Were Go releases judged by commit time while the index was in force? | `increase(pkgwarden_go_index_fallbacks_total[15m]) > 0` |
 | Which instances serve unchecked packages when advisories fail? | `pkgwarden_policy_info{fail_open="true"}` |
 | Which instances run a cooldown other than 7 days? | `pkgwarden_policy_info{cooldown!="168h0m0s"}` |
 | Which versions are running? | `count by (version) (pkgwarden_build_info)` |
