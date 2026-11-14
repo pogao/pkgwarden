@@ -259,6 +259,18 @@ func TestAllowlistBypassesEveryCheck(t *testing.T) {
 	assertDecision(t, a, "1.0", Allow)
 }
 
+func TestAllowlistMatchesNpmNamesExactly(t *testing.T) {
+	cfg := Config{Allow: map[ecosystem.Ecosystem][]string{ecosystem.Npm: {"jquery"}}}
+	src := fakeSource{advs: []advisory.Advisory{{ID: "MAL-2026-6", Kind: advisory.Malicious}}}
+	for name, want := range map[string]Decision{"jquery": Allow, "jQuery": Block} {
+		a := newTestEngine(cfg, src).Assess(context.Background(), &Package{
+			Ecosystem: ecosystem.Npm, Name: name,
+			Releases: []Release{{Version: "1.0.0", Published: daysAgo(100)}},
+		})
+		assertDecision(t, a, "1.0.0", want)
+	}
+}
+
 func TestUnknownReleaseIsBlocked(t *testing.T) {
 	a := newTestEngine(Config{}, nil).Assess(context.Background(), &Package{
 		Ecosystem: ecosystem.Cargo, Name: "serde", Releases: []Release{{Version: "1.0.0", Published: daysAgo(900)}},

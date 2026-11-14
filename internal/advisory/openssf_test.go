@@ -85,6 +85,8 @@ func datasetFiles(t *testing.T) map[string]string {
 			"affected":[{"package":{"name":"gone","ecosystem":"npm"}}]}`,
 		"osv/unmergable/npm/limbo/MAL-2024-5.json": `{"id":"MAL-2024-5",
 			"affected":[{"package":{"name":"limbo","ecosystem":"npm"}}]}`,
+		"osv/malicious/npm/jquery/MAL-2024-6.json": `{"id":"MAL-2024-6",
+			"affected":[{"package":{"name":"jquery","ecosystem":"npm"}}]}`,
 		"osv/malicious/maven/x/MAL-2024-4.json": `{"id":"MAL-2024-4",
 			"affected":[{"package":{"name":"org.example:x","ecosystem":"Maven"}}]}`,
 	}
@@ -106,8 +108,8 @@ func TestOpenSSFRefresh(t *testing.T) {
 	if err := src.Refresh(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if n := telemetrytest.Value(t, "pkgwarden_openssf_packages", nil); n != 2 {
-		t.Errorf("pkgwarden_openssf_packages = %v, want 2 (rustdecimal and evil-pkg)", n)
+	if n := telemetrytest.Value(t, "pkgwarden_openssf_packages", nil); n != 3 {
+		t.Errorf("pkgwarden_openssf_packages = %v, want 3 (rustdecimal, evil-pkg and jquery)", n)
 	}
 	if ts := telemetrytest.Value(t, "pkgwarden_openssf_last_success_timestamp_seconds", nil); ts < float64(start) {
 		t.Errorf("pkgwarden_openssf_last_success_timestamp_seconds = %v, want at least %d", ts, start)
@@ -136,7 +138,7 @@ func TestOpenSSFRefresh(t *testing.T) {
 	for _, q := range []struct {
 		eco  ecosystem.Ecosystem
 		name string
-	}{{ecosystem.Npm, "gone"}, {ecosystem.Npm, "limbo"}, {ecosystem.Npm, "unknown"}, {ecosystem.Cargo, "rust_decimal"}} {
+	}{{ecosystem.Npm, "gone"}, {ecosystem.Npm, "limbo"}, {ecosystem.Npm, "unknown"}, {ecosystem.Npm, "jQuery"}, {ecosystem.Cargo, "rust_decimal"}} {
 		if advs, err := src.Lookup(ctx, q.eco, q.name); err != nil || advs != nil {
 			t.Errorf("Lookup(%s, %s) = %+v, %v; want nil, nil", q.eco, q.name, advs, err)
 		}
