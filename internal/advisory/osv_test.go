@@ -134,6 +134,18 @@ func TestOSVLastAffected(t *testing.T) {
 	checkAffects(t, a, []string{"0.0.1", "1.0.1"}, []string{"1.0.2"})
 }
 
+func TestOSVMatchesNpmNamesExactly(t *testing.T) {
+	body := `{"vulns":[{"id":"GHSA-case-0000-0000","affected":[
+		{"package":{"name":"jQuery","ecosystem":"npm"},"versions":["1.0.0"]},
+		{"package":{"name":"jquery","ecosystem":"npm"},"versions":["3.4.1"]}]}]}`
+	src, _ := osvServer(t, func(osvQuery) string { return body })
+	advs, err := src.Lookup(context.Background(), ecosystem.Npm, "jQuery")
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkAffects(t, byID(t, advs, "GHSA-case-0000-0000"), []string{"1.0.0"}, []string{"3.4.1"})
+}
+
 func TestOSVRecordMapping(t *testing.T) {
 	body := `{"vulns":[
 	{"id":"MAL-2024-9","details":"\n\n  Package exfiltrates credentials.\nMore text.","affected":[{"package":{"name":"evil","ecosystem":"npm"},"ranges":[{"type":"SEMVER","events":[{"introduced":"0"}]}]}]},
