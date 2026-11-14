@@ -51,6 +51,17 @@ func bytesAllocated(f func()) uint64 {
 	return after.TotalAlloc - before.TotalAlloc
 }
 
+// skipAllocationBudgetUnderRace ends the test before its byte comparison
+// when the race detector is on. The detector's own allocations move one
+// packument rewrite by about 100 MB from run to run, more than these
+// budgets allow. The requests and their checks have already run.
+func skipAllocationBudgetUnderRace(t *testing.T) {
+	t.Helper()
+	if raceEnabled {
+		t.Skip("allocation budgets are checked without -race")
+	}
+}
+
 // bigProxy returns the URL of a proxy whose upstream serves a
 // largePackument of 2000 releases with pad bytes each as package big, and
 // that packument.
@@ -109,6 +120,7 @@ func TestConcurrentTarballRequestsDoNotMultiplyPackumentMemory(t *testing.T) {
 	})
 
 	t.Logf("%d concurrent tarball requests allocated %d bytes in all, for a %d-byte packument", n, allocated, len(doc))
+	skipAllocationBudgetUnderRace(t)
 	if allocated > uint64(len(doc)) {
 		t.Errorf("%d concurrent tarball requests for a cached packument allocated %d bytes, more than the %d-byte packument itself", n, allocated, len(doc))
 	}
@@ -162,6 +174,7 @@ func TestConcurrentPackumentRequestsShareOneRewrite(t *testing.T) {
 		}
 	}
 	t.Logf("one packument request allocated %d bytes, %d concurrent ones %d", one, n, allocated)
+	skipAllocationBudgetUnderRace(t)
 	if allocated > 4*one {
 		t.Errorf("%d concurrent requests for one packument allocated %d bytes, more than 4 times the %d bytes of one request", n, allocated, one)
 	}
@@ -189,6 +202,7 @@ func TestConcurrentManifestRequestsDoNotEachParseThePackument(t *testing.T) {
 	})
 
 	t.Logf("one manifest request allocated %d bytes, %d concurrent ones %d, for a %d-byte packument", one, n, allocated, len(doc))
+	skipAllocationBudgetUnderRace(t)
 	if extra := (allocated - min(allocated, one)) / (n - 1); extra > uint64(len(doc))/4 {
 		t.Errorf("each of %d concurrent manifest requests beyond the first allocated %d bytes, more than a quarter of the %d-byte packument", n, extra, len(doc))
 	}
