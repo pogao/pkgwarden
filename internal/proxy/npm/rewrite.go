@@ -17,16 +17,6 @@ type rewriteKey struct {
 	tarballBase string
 }
 
-// rewritten is a packument with the blocked versions removed, and the
-// upstream dist-tags. ok is false when versions existed but none is
-// allowed, and latest then names the version whose verdict to report.
-type rewritten struct {
-	body     []byte
-	distTags map[string]string
-	ok       bool
-	latest   string
-}
-
 // flight is a rewrite that concurrent requests share. Once every request
 // waiting for it has gone, it stops waiting for rewriteBytes, but a rewrite
 // that has started runs to the end.
@@ -97,13 +87,5 @@ func (r *Registry) runRewrite(ctx context.Context, raw []byte, allowed func(stri
 	if err != nil {
 		return nil, err
 	}
-	body, ok, err := p.filter(allowed, tarballBase, r.registryPath)
-	if err != nil {
-		return nil, err
-	}
-	res := &rewritten{body: body, distTags: p.distTags, ok: ok}
-	if !ok {
-		res.latest = p.latest()
-	}
-	return res, nil
+	return p.filter(allowed, tarballBase, r.registryPath)
 }

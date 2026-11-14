@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"path"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/mod/semver"
@@ -147,11 +148,40 @@ func parsePackument(b []byte) (*packument, error) {
 	return p, nil
 }
 
+// rewritten is a packument with the blocked versions removed, and tags its
+// dist-tags as body has them. ok is false when versions existed but none
+// is allowed, and latest then names the version whose verdict to report.
+type rewritten struct {
+	body         []byte
+	tags         json.RawMessage
+	upstreamTags map[string]string
+	ok           bool
+	latest       string
+
+	parseManifests sync.Once
+	manifests      map[string]json.RawMessage
+	manifestsErr   error
+}
+
+// manifest returns the manifest of version v in body. The requests that
+// share a rewrite share one parse of body, and only manifest requests
+// wait for it.
+func (rw *rewritten) manifest(v string) (json.RawMessage, bool, error) {
+	rw.parseManifests.Do(func() {
+		var doc struct {
+			Versions map[string]json.RawMessage `json:"versions"`
+		}
+		rw.manifestsErr = json.Unmarshal(rw.body, &doc)
+		rw.manifests = doc.Versions
+	})
+	m, ok := rw.manifests[v]
+	return m, ok, rw.manifestsErr
+}
+
 // filter returns the packument with every version that allowed rejects
 // removed, tarball URLs pointing at tarballBase, and dist-tags moved off
-// removed versions. It reports false when versions existed but none is
-// allowed.
-func (p *packument) filter(allowed func(string) bool, tarballBase, registryPath string) ([]byte, bool, error) {
+// removed versions.
+func (p *packument) filter(allowed func(string) bool, tarballBase, registryPath string) (*rewritten, error) {
 	kept := make(map[string]json.RawMessage, len(p.versions))
 	for v, m := range p.versions {
 		if !allowed(v) {
@@ -160,30 +190,33 @@ func (p *packument) filter(allowed func(string) bool, tarballBase, registryPath 
 		}
 		raw, err := m.withTarball(tarballBase, registryPath)
 		if err != nil {
-			return nil, false, fmt.Errorf("version %s: %w", v, err)
+			return nil, fmt.Errorf("version %s: %w", v, err)
 		}
 		kept[v] = raw
 	}
 	if len(p.versions) > 0 && len(kept) == 0 {
-		return nil, false, nil
+		return &rewritten{upstreamTags: p.distTags, latest: p.latest()}, nil
 	}
 	if p.doc["versions"] != nil {
 		if err := setJSON(p.doc, "versions", kept); err != nil {
-			return nil, false, err
+			return nil, err
 		}
 	}
 	if p.times != nil {
 		if err := setJSON(p.doc, "time", p.times); err != nil {
-			return nil, false, err
+			return nil, err
 		}
 	}
 	if p.distTags != nil {
 		if err := setJSON(p.doc, "dist-tags", retarget(p.distTags, kept)); err != nil {
-			return nil, false, err
+			return nil, err
 		}
 	}
 	b, err := marshal(p.doc)
-	return b, true, err
+	if err != nil {
+		return nil, err
+	}
+	return &rewritten{body: b, tags: p.doc["dist-tags"], upstreamTags: p.distTags, ok: true}, nil
 }
 
 // latest returns the version the latest tag names, or the highest version
