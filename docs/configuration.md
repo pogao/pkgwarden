@@ -19,6 +19,8 @@ This is the output of `env -u GITHUB_TOKEN go run ./cmd/pkgwarden -h 2>&1` at th
 	    	serve packages when advisory sources are unreachable
 	  -ghsa-token string
 	    	GitHub token; enables direct GitHub Advisory Database lookups (default $GITHUB_TOKEN)
+	  -go-index
+	    	measure the Go cooldown from when proxy.golang.org first served a version, synced from index.golang.org (the first sync reads about 60 MB for a 7-day cooldown)
 	  -heuristics
 	    	score suspicious-package signals (default true)
 	  -heuristics-block int
@@ -85,6 +87,7 @@ A command-line flag replaces the environment value. It does not add to it. `-all
 | `-cooldown` | duration | `168h0m0s` | `PKGWARDEN_COOLDOWN` |
 | `-fail-open` | bool | `false` | `PKGWARDEN_FAIL_OPEN` |
 | `-ghsa-token` | string | value of `GITHUB_TOKEN` | `PKGWARDEN_GHSA_TOKEN` |
+| `-go-index` | bool | `false` | `PKGWARDEN_GO_INDEX` |
 | `-heuristics` | bool | `true` | `PKGWARDEN_HEURISTICS` |
 | `-heuristics-block` | int | `70` | `PKGWARDEN_HEURISTICS_BLOCK` |
 | `-heuristics-warn` | int | `30` | `PKGWARDEN_HEURISTICS_WARN` |
@@ -143,6 +146,10 @@ The default of 256 MiB holds the largest packument in common use, renovate at ab
 ### `-cooldown`
 
 The minimum age a release must reach before pkgwarden serves it. `0` turns the cooldown off. A negative value is rejected. See [Cooldown](cooldown.md).
+
+### `-go-index`
+
+Measures the age of a Go release from the later of its commit time and the time `proxy.golang.org` first served it, which a module author cannot backdate. pkgwarden reads the first-seen times from `https://index.golang.org/index` in the background. With a 7-day cooldown, the first read took 212 requests, 56.5 MB, and about 7 minutes in one test, and it raised resident memory by about 100 MB. Until that first read finishes, and whenever the index fails, Go releases are judged by their commit time, as without the flag. With `-cooldown 0` the flag does nothing. See [Go: measure from the first-seen time](cooldown.md#go-measure-from-the-first-seen-time).
 
 ### `-block-severity`
 

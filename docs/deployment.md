@@ -81,6 +81,7 @@ pkgwarden fetches everything at request time. It needs HTTPS access to these hos
 | `api.osv.dev` | OSV advisory queries | Unless `-osv-url` points elsewhere |
 | `api.github.com` | GitHub Advisory Database queries | When `-ghsa-token` is set |
 | `codeload.github.com` | The OpenSSF malicious-packages archive | When `-openssf` is set |
+| `index.golang.org` | The Go module index, for first-seen times | When `-go-index` is set |
 
 pkgwarden reads `HTTPS_PROXY`, `HTTP_PROXY`, and `NO_PROXY` for its outbound requests.
 
@@ -123,7 +124,7 @@ pkgwarden logs these messages:
 
 | `msg` | Level | Meaning | Other fields |
 | --- | --- | --- | --- |
-| `listening` | INFO | pkgwarden bound its ports and started serving. `addr` is the bound address, so `-listen :0` shows the port the system picked. `metrics_addr` is where `/metrics` is served, which is `addr` unless `-metrics-listen` is set. | `addr`, `metrics_addr`, `cooldown`, `ghsa`, `openssf`, `heuristics` |
+| `listening` | INFO | pkgwarden bound its ports and started serving. `addr` is the bound address, so `-listen :0` shows the port the system picked. `metrics_addr` is where `/metrics` is served, which is `addr` unless `-metrics-listen` is set. | `addr`, `metrics_addr`, `cooldown`, `ghsa`, `openssf`, `go_index`, `heuristics` |
 | `request` | INFO, DEBUG for `/healthz` and `/metrics` | pkgwarden finished a response. `path` has no query string. `bytes` counts the body pkgwarden sent. `decision` is the `X-Pkgwarden-Decision` header, left out when the response did not go through the policy. | `method`, `path`, `status`, `bytes`, `duration_ms`, `ecosystem`, `decision`, `user_agent`, `remote_addr` |
 | `upstream` | INFO | pkgwarden got a response, or an error, from a registry or advisory source. `path` has no query string. `content_length` is left out when upstream did not send one. `duration_ms` runs until the response headers arrived. No header value is logged. | `method`, `host`, `path`, `status`, `content_length`, `duration_ms`, or `err` instead of `status` |
 | `blocked` | INFO | pkgwarden answered a request with 403. | `ecosystem`, `package`, `version`, `stage`, `rules`, `reasons` |
@@ -131,6 +132,9 @@ pkgwarden logs these messages:
 | `hiding every version` | INFO | pkgwarden served an empty RubyGems info file for a gem blocked at package level. | `ecosystem`, `package`, `stage`, `rules`, `findings` |
 | `artifact relay interrupted` | WARN | Copying a package file to the client failed partway, such as when the client disconnected. | `ecosystem`, `package`, `version`, `bytes`, `err` |
 | `advisory dataset refresh failed` | ERROR | An OpenSSF download or parse failed. The previous index stays in use, and pkgwarden retries with backoff. | `source`, `err` |
+| `go index synced` | INFO | The first read of the Go module index reached the end of the feed, so first-seen times are now in force. Logged once. | `versions`, `pages`, `duration` |
+| `go index sync failed` | ERROR | A read of the Go module index failed. Go releases are judged by their commit time until a read succeeds, 30 seconds later at the earliest. | `err` |
+| `go index behind, judging by commit time` | DEBUG | A Go request did not get a read of the module index that covers it, because the first read has not finished, the last read failed, or the extra read took more than 10 seconds. | `module` |
 | `metadata cache hit` | DEBUG | pkgwarden answered a metadata fetch from its cache, with no upstream call. | `url` |
 | `joined in-flight fetch` | DEBUG | A metadata fetch shared the upstream call that another request started. That call's `upstream` line carries the other request's ID. | `url` |
 | `advisory cache hit` | DEBUG | pkgwarden answered an advisory lookup from its cache, with no upstream call. | `ecosystem`, `package` |
@@ -140,9 +144,9 @@ pkgwarden logs these messages:
 
 `version` is left out of `blocked` and `serving with warnings` when the verdict covers the whole package. `stage` is `metadata` or `artifact`, as in [Label values](observability.md#label-values). `rules` lists each rule behind the decision once. `reasons` holds the findings at the verdict's decision, as `<rule>: <reason>` joined with `; `. Unlike the 403 body and the `X-Pkgwarden-Warning` header, it is not shortened. `findings` holds the full finding objects.
 
-These lines were captured on 2026-11-07. The long ones are trimmed with `...`:
+The `listening` line was captured on 2026-11-14 and the others on 2026-11-07. The long ones are trimmed with `...`:
 
-	{"time":"2026-11-07T18:36:28.12966-05:00","level":"INFO","msg":"listening","addr":"127.0.0.1:18181","metrics_addr":"127.0.0.1:18181","cooldown":"168h0m0s","ghsa":false,"openssf":false,"heuristics":true}
+	{"time":"2026-11-14T11:42:25.422739-05:00","level":"INFO","msg":"listening","addr":"127.0.0.1:52603","metrics_addr":"127.0.0.1:52603","cooldown":"168h0m0s","ghsa":false,"openssf":false,"go_index":false,"heuristics":true}
 	{"time":"2026-11-07T18:36:32.255631-05:00","level":"INFO","msg":"upstream","request_id":"f3b81df0468fbbea48d308745598b8ed","method":"GET","host":"crates.io","path":"/api/v1/crates/smallvec","status":200,"duration_ms":233.876}
 	{"time":"2026-11-07T18:36:32.456401-05:00","level":"INFO","msg":"blocked","request_id":"f3b81df0468fbbea48d308745598b8ed","ecosystem":"cargo","package":"smallvec","version":"1.6.0","stage":"artifact","rules":["advisory/vulnerability"],"reasons":"advisory/vulnerability: GHSA-43w2-9j62-hq99 (critical vulnerability, via osv): Buffer overflow in SmallVec::insert_many https://osv.dev/vulnerability/GHSA-43w2-9j62-hq99"}
 	{"time":"2026-11-07T18:36:32.456606-05:00","level":"INFO","msg":"request","request_id":"f3b81df0468fbbea48d308745598b8ed","method":"GET","path":"/cargo/api/v1/crates/smallvec/1.6.0/download","status":403,"bytes":244,"duration_ms":435.098,"ecosystem":"cargo","decision":"block","user_agent":"curl/8.7.1","remote_addr":"127.0.0.1:55999"}
