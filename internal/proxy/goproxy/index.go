@@ -28,6 +28,11 @@ const (
 	indexPoll  = 30 * time.Second
 	minSyncGap = time.Second
 	indexWait  = 10 * time.Second
+	// A load waits for the feed to pass its fetch time plus indexClockSkew,
+	// so that it still finds the version its own fetch put in the feed when
+	// pkgwarden's clock runs up to that much behind the index's. Waiting
+	// longer is the safe side of a clock error.
+	indexClockSkew = time.Second
 )
 
 // Index is the set of module versions that proxy.golang.org first served
@@ -46,12 +51,26 @@ type Index struct {
 	started time.Time
 	pages   int
 
-	mu             sync.Mutex
-	seen           map[string]time.Time
-	completeBefore time.Time
-	failed         bool
-	synced         chan struct{}
+	mu   sync.Mutex
+	seen map[string]time.Time
+	// newest is the latest Timestamp read from the feed. The feed grows in
+	// Timestamp order, so seen holds every version first served up to it.
+	newest time.Time
+	state  indexState
+	synced chan struct{}
 }
+
+type indexState int
+
+const (
+	// indexStarting means no Sync has read to the head of the feed yet.
+	indexStarting indexState = iota
+	indexReady
+	// indexFailed means the last Sync failed after an earlier one succeeded.
+	indexFailed
+	// indexStopped means Run returned, so no Sync follows.
+	indexStopped
+)
 
 // NewIndex returns an Index over the feed at url, or index.golang.org when
 // url is empty, that keeps versions first served within cooldown. It holds
@@ -78,14 +97,17 @@ func (ix *Index) Sync(ctx context.Context) error {
 	if ix.since.IsZero() {
 		ix.since, ix.started = now.Add(-ix.cooldown), now
 	}
-	completeBefore, err := ix.read(ctx)
+	err := ix.read(ctx)
 
 	ix.mu.Lock()
-	first := err == nil && ix.completeBefore.IsZero()
-	if err == nil {
-		ix.completeBefore = completeBefore
+	first := err == nil && ix.state == indexStarting
+	switch {
+	case ix.state == indexStopped:
+	case err == nil:
+		ix.state = indexReady
+	case ix.state == indexReady:
+		ix.state = indexFailed
 	}
-	ix.failed = err != nil
 	if now.Sub(ix.pruned) >= indexPoll {
 		cutoff := now.Add(-ix.cooldown)
 		for k, t := range ix.seen {
@@ -95,7 +117,7 @@ func (ix *Index) Sync(ctx context.Context) error {
 		}
 		ix.pruned = now
 	}
-	n := len(ix.seen)
+	n, newest := len(ix.seen), ix.newest
 	close(ix.synced)
 	ix.synced = make(chan struct{})
 	ix.mu.Unlock()
@@ -103,25 +125,23 @@ func (ix *Index) Sync(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	telemetry.RecordGoIndexSync(n, completeBefore)
+	telemetry.RecordGoIndexSync(n, newest)
 	if first {
 		slog.Info("go index synced", "versions", n, "pages", ix.pages, "duration", time.Since(ix.started).Round(time.Millisecond).String())
 	}
 	return nil
 }
 
-func (ix *Index) read(ctx context.Context) (time.Time, error) {
+func (ix *Index) read(ctx context.Context) error {
 	for {
-		start := time.Now()
 		page, err := ix.page(ctx)
 		if err != nil && ctx.Err() == nil {
 			// The server can close a kept-alive connection just as a
 			// request reuses it.
-			start = time.Now()
 			page, err = ix.page(ctx)
 		}
 		if err != nil {
-			return time.Time{}, err
+			return err
 		}
 		ix.pages++
 		ix.mu.Lock()
@@ -130,6 +150,9 @@ func (ix *Index) read(ctx context.Context) (time.Time, error) {
 			if t, ok := ix.seen[k]; !ok || e.Timestamp.Before(t) {
 				ix.seen[k] = e.Timestamp
 			}
+			if e.Timestamp.After(ix.newest) {
+				ix.newest = e.Timestamp
+			}
 		}
 		ix.mu.Unlock()
 		// The next page starts at the last timestamp, inclusive, so a full
@@ -137,10 +160,10 @@ func (ix *Index) read(ctx context.Context) (time.Time, error) {
 		if n := len(page); n > 0 && page[n-1].Timestamp.After(ix.since) {
 			ix.since = page[n-1].Timestamp
 		} else if n == indexPageLimit {
-			return time.Time{}, fmt.Errorf("%s: a full page since %s did not advance", ix.url, ix.since.Format(time.RFC3339Nano))
+			return fmt.Errorf("%s: a full page since %s did not advance", ix.url, ix.since.Format(time.RFC3339Nano))
 		}
 		if len(page) < indexPageLimit {
-			return start, nil
+			return nil
 		}
 	}
 }
@@ -154,7 +177,10 @@ type indexEntry struct {
 func (ix *Index) page(ctx context.Context) ([]indexEntry, error) {
 	ctx, cancel := context.WithTimeout(ctx, indexPageTimeout)
 	defer cancel()
-	url := fmt.Sprintf("%s?since=%s&limit=%d", ix.url, ix.since.UTC().Format(time.RFC3339Nano), indexPageLimit)
+	// A read that finds nothing new repeats its since, and the index lets
+	// shared caches answer a repeated URL for 5 minutes with what it held
+	// then. The nonce sends every request to the index itself.
+	url := fmt.Sprintf("%s?since=%s&limit=%d&nonce=%d", ix.url, ix.since.UTC().Format(time.RFC3339Nano), indexPageLimit, time.Now().UnixNano())
 	resp, err := ix.up.Open(ctx, url, nil)
 	if err != nil {
 		return nil, err
@@ -184,8 +210,10 @@ func (ix *Index) page(ctx context.Context) ([]indexEntry, error) {
 
 // Run syncs now and then every 30 seconds until ctx is done, sooner when a
 // load is waiting for the index, but never within a second of the last Sync.
-// It logs a failed Sync and retries at the next poll.
+// It logs a failed Sync and retries at the next poll. Once it returns, loads
+// no longer wait for the index.
 func (ix *Index) Run(ctx context.Context) {
+	defer ix.stop()
 	for {
 		if err := ix.Sync(ctx); err != nil {
 			if ctx.Err() != nil {
@@ -208,35 +236,56 @@ func (ix *Index) Run(ctx context.Context) {
 	}
 }
 
+func (ix *Index) stop() {
+	ix.mu.Lock()
+	defer ix.mu.Unlock()
+	ix.state = indexStopped
+	close(ix.synced)
+	ix.synced = make(chan struct{})
+}
+
 // proxy.golang.org adds a version to the index when it first serves it, so
 // a .info fetch can be what puts the version there.
 func (ix *Index) firstSeen(ctx context.Context, mod string, rels []policy.Release, fetched time.Time) {
-	if !ix.await(ctx, fetched) {
-		slog.DebugContext(ctx, "go index behind, judging by commit time", "module", mod)
-	}
+	covered, state := ix.await(ctx, fetched)
 	ix.mu.Lock()
-	defer ix.mu.Unlock()
 	for i, r := range rels {
 		if t, ok := ix.seen[mod+"@"+r.Version]; ok {
 			rels[i].FirstSeen = t
 		}
 	}
+	newest := ix.newest
+	ix.mu.Unlock()
+	switch {
+	case covered:
+	case state == indexStarting:
+		slog.DebugContext(ctx, "go index behind, judging by commit time", "module", mod)
+	default:
+		slog.WarnContext(ctx, "go index behind, judging by commit time", "module", mod, "index_newest", newest)
+		telemetry.RecordGoIndexFallback()
+	}
 }
 
-// await does not wait before the first Sync reaches the head or after a
-// failed Sync, so that a slow or down index never stalls an install.
-func (ix *Index) await(ctx context.Context, fetched time.Time) bool {
+// await reports whether the feed has been read past fetched, so that seen
+// holds any version that a fetch ended by then made proxy.golang.org serve
+// first, and otherwise the state that ended the wait. It waits at most
+// indexWait, and not at all before the first Sync reaches the head, after a
+// failed Sync, or once Run returned, so that a slow or down index never
+// stalls an install for long.
+func (ix *Index) await(ctx context.Context, fetched time.Time) (bool, indexState) {
 	ctx, cancel := context.WithTimeout(ctx, indexWait)
 	defer cancel()
 	for {
 		ix.mu.Lock()
-		completeBefore, failed, synced := ix.completeBefore, ix.failed, ix.synced
+		state, newest, synced := ix.state, ix.newest, ix.synced
 		ix.mu.Unlock()
 		switch {
-		case completeBefore.After(fetched):
-			return true
-		case completeBefore.IsZero() || failed:
-			return false
+		case state == indexStarting:
+			return false, state
+		case !newest.Before(fetched.Add(indexClockSkew)):
+			return true, state
+		case state != indexReady:
+			return false, state
 		}
 		select {
 		case ix.kick <- struct{}{}:
@@ -245,7 +294,7 @@ func (ix *Index) await(ctx context.Context, fetched time.Time) bool {
 		select {
 		case <-synced:
 		case <-ctx.Done():
-			return false
+			return false, state
 		}
 	}
 }
