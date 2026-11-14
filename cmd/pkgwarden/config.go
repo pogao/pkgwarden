@@ -26,6 +26,7 @@ type config struct {
 	ghsaToken      string
 	openSSF        bool
 	openSSFRefresh time.Duration
+	goIndex        bool
 
 	policy policy.Config
 }
@@ -65,6 +66,7 @@ func parseConfig(args []string) (*config, error) {
 	fs.StringVar(&c.ghsaToken, "ghsa-token", "", "GitHub token; enables direct GitHub Advisory Database lookups (default $GITHUB_TOKEN)")
 	fs.BoolVar(&c.openSSF, "openssf", false, "sync the OpenSSF malicious-packages dataset locally (about 300 MB download per refresh)")
 	fs.DurationVar(&c.openSSFRefresh, "openssf-refresh", 6*time.Hour, "how often the OpenSSF dataset is refreshed")
+	fs.BoolVar(&c.goIndex, "go-index", false, "measure the Go cooldown from when proxy.golang.org first served a version, synced from index.golang.org (the first sync reads about 60 MB for a 7-day cooldown)")
 
 	var envErr error
 	fs.VisitAll(func(f *flag.Flag) {

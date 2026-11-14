@@ -73,11 +73,16 @@ func run(ctx context.Context, cfg *config) error {
 	engine := policy.New(cfg.policy, advisory.Cached(advisory.Merge(sources...), cfg.advisoryTTL))
 
 	up := proxy.NewUpstream(client, "pkgwarden (+https://github.com/pogao/pkgwarden)", cfg.metadataTTL, cfg.metadataBytes)
+	var goIndex *goproxy.Index
+	if cfg.goIndex && cfg.policy.Cooldown > 0 {
+		goIndex = goproxy.NewIndex(up, "", cfg.policy.Cooldown)
+		go goIndex.Run(ctx)
+	}
 	app := proxy.NewServer(engine,
 		npm.New(npm.Options{PublicURL: cfg.publicURL, Engine: engine, HTTP: up}),
 		pypi.New(pypi.Options{PublicURL: cfg.publicURL, Engine: engine, HTTP: up}),
 		rubygems.New(rubygems.Options{PublicURL: cfg.publicURL, Engine: engine, HTTP: up}),
-		goproxy.New(goproxy.Options{Engine: engine, HTTP: up}),
+		goproxy.New(goproxy.Options{Engine: engine, HTTP: up, Index: goIndex}),
 		cargo.New(cargo.Options{PublicURL: cfg.publicURL, Engine: engine, HTTP: up}),
 	)
 	telemetry.SetPolicy(telemetry.Policy{
@@ -119,7 +124,7 @@ func run(ctx context.Context, cfg *config) error {
 		go func() { errc <- srv.Serve(ln) }()
 	}
 	slog.Info("listening", "addr", addrs[0], "metrics_addr", addrs[len(addrs)-1], "cooldown", cfg.policy.Cooldown.String(),
-		"ghsa", cfg.ghsaToken != "", "openssf", cfg.openSSF, "heuristics", cfg.policy.Heuristics.Enabled)
+		"ghsa", cfg.ghsaToken != "", "openssf", cfg.openSSF, "go_index", goIndex != nil, "heuristics", cfg.policy.Heuristics.Enabled)
 
 	var err error
 	select {
