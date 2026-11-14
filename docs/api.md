@@ -15,7 +15,7 @@ pkgwarden serves one HTTP listener, or two with `-metrics-listen`. It mounts one
 | `/healthz` | A liveness check. |
 | `/metrics` | Prometheus metrics. Served here unless `-metrics-listen` is set. |
 
-Any other path answers 404. With `-metrics-listen`, the second listener serves only `/metrics` and answers 404 for every other path.
+Any other path answers 404. So does any path whose decoded form has a `.` or `..` segment, an empty segment other than a trailing slash, or a backslash, such as `/npm/-/%2e%2e/lodash`. That request reaches no adapter and no upstream registry. With `-metrics-listen`, the second listener serves only `/metrics` and answers 404 for every other path.
 
 ## `GET /api/v1/check`
 
@@ -214,8 +214,8 @@ The upstream is `https://rubygems.org`.
 | Route | Handling |
 | --- | --- |
 | `GET /rubygems/info/<gem>` | Filtered compact index file. A gem blocked at package level gets a body of `---` and status 200. |
-| `GET /rubygems/gems/<file>`, `GET /rubygems/downloads/<file>` | Enforced download when `<file>` ends in `.gem`. Passed through otherwise. |
-| `GET /rubygems/quick/Marshal.4.8/<file>` | Enforced gemspec when `<file>` ends in `.gemspec.rz`. Passed through otherwise. |
+| `GET /rubygems/gems/<file>`, `GET /rubygems/downloads/<file>` | Enforced download when `<file>` ends in `.gem`. 404 otherwise, with no request upstream. |
+| `GET /rubygems/quick/Marshal.4.8/<file>` | Enforced gemspec when `<file>` ends in `.gemspec.rz`. 404 otherwise, with no request upstream. |
 | Any other `GET` under `/rubygems/info/`, `/rubygems/gems/`, `/rubygems/downloads/`, or `/rubygems/quick/`, such as `/rubygems/info/<gem>/` | 404, with no request upstream. |
 | Any other `GET`, including `/rubygems/versions`, `/rubygems/names`, and `/rubygems/specs.4.8.gz` | Passed through, with `Range`, `If-None-Match`, `If-Modified-Since`, `Accept-Encoding`, and the query string. |
 

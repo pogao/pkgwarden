@@ -238,14 +238,15 @@ func etagMatches(ifNoneMatch, etag string) bool {
 
 // serveArtifact enforces the policy on a file named
 // <name>-<version>[-<platform>]<suffix> before streaming it from upstream.
-// A package file (a .gem, not a gemspec) counts in the artifact metrics.
+// Any other file name gets 404. A package file (a .gem, not a gemspec)
+// counts in the artifact metrics.
 func (r *Registry) serveArtifact(suffix string, packageFile bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		ctx := req.Context()
 		target := r.upstream + req.URL.EscapedPath()
 		base, ok := strings.CutSuffix(req.PathValue("file"), suffix)
 		if !ok {
-			r.relay(w, req, target)
+			http.NotFound(w, req)
 			return
 		}
 		pkg, version, err := r.resolve(ctx, base)
