@@ -51,9 +51,17 @@ type Upstream struct {
 	group     singleflight.Group
 }
 
-// NewUpstream returns an Upstream that caches metadata for metaTTL.
-func NewUpstream(client *http.Client, userAgent string, metaTTL time.Duration) *Upstream {
-	return &Upstream{client: client, userAgent: userAgent, meta: cache.New[string, []byte](metaTTL, 512)}
+// entryOverhead approximates what the cache spends on an entry besides its
+// key and value, so that tiny documents still count against the budget.
+const entryOverhead = 256
+
+// NewUpstream returns an Upstream that caches metadata for metaTTL, holding
+// at most cacheBytes of it.
+func NewUpstream(client *http.Client, userAgent string, metaTTL time.Duration, cacheBytes int64) *Upstream {
+	meta := cache.NewWeighted(metaTTL, cacheBytes, func(key string, b []byte) int64 {
+		return int64(len(key)) + int64(len(b)) + entryOverhead
+	})
+	return &Upstream{client: client, userAgent: userAgent, meta: meta}
 }
 
 // Fetch returns the body of a metadata document. A 404 or 410 yields ErrNotFound.

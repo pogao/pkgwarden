@@ -232,7 +232,7 @@ func newEnv(t *testing.T, src fakeSource) env {
 	reg := goproxy.New(goproxy.Options{
 		Upstream: fakeProxy(t, requests, infoHits).URL,
 		Engine:   engine,
-		HTTP:     proxy.NewUpstream(http.DefaultClient, "pkgwarden-test", time.Minute),
+		HTTP:     proxy.NewUpstream(http.DefaultClient, "pkgwarden-test", time.Minute, 64<<20),
 	})
 	srv := httptest.NewServer(proxy.NewServer(engine, reg))
 	t.Cleanup(srv.Close)

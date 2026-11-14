@@ -26,7 +26,7 @@ func tracedProxy(t *testing.T, src fakeSource) *httptest.Server {
 		Registry:  fakeRegistry(t).URL,
 		Downloads: fakeDownloads(t).URL,
 		Engine:    engine,
-		HTTP:      proxy.NewUpstream(&http.Client{Transport: telemetry.Transport(nil)}, "pkgwarden-test", time.Minute),
+		HTTP:      proxy.NewUpstream(&http.Client{Transport: telemetry.Transport(nil)}, "pkgwarden-test", time.Minute, 64<<20),
 	})
 	srv := httptest.NewServer(telemetry.Middleware(proxy.NewServer(engine, reg)))
 	t.Cleanup(srv.Close)

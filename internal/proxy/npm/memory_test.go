@@ -68,7 +68,7 @@ func TestConcurrentTarballRequestsDoNotMultiplyPackumentMemory(t *testing.T) {
 		Registry:  upstream.URL,
 		Downloads: upstream.URL,
 		Engine:    engine,
-		HTTP:      proxy.NewUpstream(http.DefaultClient, "pkgwarden-test", time.Minute),
+		HTTP:      proxy.NewUpstream(http.DefaultClient, "pkgwarden-test", time.Minute, 64<<20),
 	})
 	srv := httptest.NewServer(proxy.NewServer(engine, reg))
 	t.Cleanup(srv.Close)

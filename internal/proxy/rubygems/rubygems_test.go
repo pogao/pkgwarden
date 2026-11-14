@@ -123,7 +123,7 @@ func newProxy(t *testing.T, gems map[string]fakeGem, advs fakeAdvisories) *httpt
 	reg := rubygems.New(rubygems.Options{
 		Upstream: upstream.URL,
 		Engine:   engine,
-		HTTP:     proxy.NewUpstream(upstream.Client(), "pkgwarden-test", time.Minute),
+		HTTP:     proxy.NewUpstream(upstream.Client(), "pkgwarden-test", time.Minute, 64<<20),
 	})
 	srv := httptest.NewServer(proxy.NewServer(engine, reg))
 	t.Cleanup(srv.Close)
@@ -356,7 +356,7 @@ func TestUnroutedPathsUnderFilteredPrefixes(t *testing.T) {
 	reg := rubygems.New(rubygems.Options{
 		Upstream: front.URL,
 		Engine:   engine,
-		HTTP:     proxy.NewUpstream(front.Client(), "pkgwarden-test", time.Minute),
+		HTTP:     proxy.NewUpstream(front.Client(), "pkgwarden-test", time.Minute, 64<<20),
 	})
 	srv := httptest.NewServer(proxy.NewServer(engine, reg))
 	t.Cleanup(srv.Close)
@@ -488,7 +488,7 @@ func TestPackage(t *testing.T) {
 	reg := rubygems.New(rubygems.Options{
 		Upstream: upstream.URL,
 		Engine:   policy.New(policy.Config{}, fakeAdvisories{}),
-		HTTP:     proxy.NewUpstream(upstream.Client(), "pkgwarden-test", time.Minute),
+		HTTP:     proxy.NewUpstream(upstream.Client(), "pkgwarden-test", time.Minute, 64<<20),
 	})
 	ctx := context.Background()
 
@@ -549,7 +549,7 @@ func TestPackageWhenGemAPIHangs(t *testing.T) {
 	reg := rubygems.New(rubygems.Options{
 		Upstream: front.URL,
 		Engine:   policy.New(policy.Config{Cooldown: 7 * day}, nil),
-		HTTP:     proxy.NewUpstream(front.Client(), "pkgwarden-test", time.Minute),
+		HTTP:     proxy.NewUpstream(front.Client(), "pkgwarden-test", time.Minute, 64<<20),
 	})
 
 	start := time.Now()

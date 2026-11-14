@@ -72,7 +72,7 @@ func run(ctx context.Context, cfg *config) error {
 	telemetry.SetAdvisorySources(map[string]bool{"osv": true, "ghsa": cfg.ghsaToken != "", "openssf": cfg.openSSF})
 	engine := policy.New(cfg.policy, advisory.Cached(advisory.Merge(sources...), cfg.advisoryTTL))
 
-	up := proxy.NewUpstream(client, "pkgwarden (+https://github.com/pogao/pkgwarden)", cfg.metadataTTL)
+	up := proxy.NewUpstream(client, "pkgwarden (+https://github.com/pogao/pkgwarden)", cfg.metadataTTL, cfg.metadataBytes)
 	app := proxy.NewServer(engine,
 		npm.New(npm.Options{PublicURL: cfg.publicURL, Engine: engine, HTTP: up}),
 		pypi.New(pypi.Options{PublicURL: cfg.publicURL, Engine: engine, HTTP: up}),

@@ -90,7 +90,7 @@ func setup(t *testing.T, src advisories, tweak func(*Options, *http.ServeMux)) (
 		Files:  upstream.URL + "/files",
 		Stats:  upstream.URL + "/stats",
 		Engine: policy.New(policy.Config{Cooldown: 7 * day}, src),
-		HTTP:   proxy.NewUpstream(upstream.Client(), "pkgwarden-test", time.Minute),
+		HTTP:   proxy.NewUpstream(upstream.Client(), "pkgwarden-test", time.Minute, 64<<20),
 	}
 	if tweak != nil {
 		tweak(&o, mux)

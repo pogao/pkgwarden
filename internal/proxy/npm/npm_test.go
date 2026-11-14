@@ -123,7 +123,7 @@ func newEnv(t *testing.T, cooldown time.Duration, src fakeSource) env {
 		Registry:  fakeRegistry(t).URL,
 		Downloads: fakeDownloads(t).URL,
 		Engine:    engine,
-		HTTP:      proxy.NewUpstream(http.DefaultClient, "pkgwarden-test", time.Minute),
+		HTTP:      proxy.NewUpstream(http.DefaultClient, "pkgwarden-test", time.Minute, 64<<20),
 	})
 	srv := httptest.NewServer(proxy.NewServer(engine, reg))
 	t.Cleanup(srv.Close)
@@ -233,7 +233,7 @@ func TestPublicURLWinsForTarballs(t *testing.T) {
 		Downloads: fakeDownloads(t).URL,
 		PublicURL: "https://pkgs.example.com/",
 		Engine:    engine,
-		HTTP:      proxy.NewUpstream(http.DefaultClient, "pkgwarden-test", time.Minute),
+		HTTP:      proxy.NewUpstream(http.DefaultClient, "pkgwarden-test", time.Minute, 64<<20),
 	})
 	srv := httptest.NewServer(proxy.NewServer(engine, reg))
 	defer srv.Close()
@@ -515,7 +515,7 @@ func TestOnlyRegistryEndpointsPassThrough(t *testing.T) {
 		Registry:  upstream.URL,
 		Downloads: upstream.URL,
 		Engine:    engine,
-		HTTP:      proxy.NewUpstream(http.DefaultClient, "pkgwarden-test", time.Minute),
+		HTTP:      proxy.NewUpstream(http.DefaultClient, "pkgwarden-test", time.Minute, 64<<20),
 	})
 	srv := httptest.NewServer(proxy.NewServer(engine, reg))
 	t.Cleanup(srv.Close)
@@ -564,7 +564,7 @@ func TestPackageWhenDownloadCountsHang(t *testing.T) {
 		Registry:  fakeRegistry(t).URL,
 		Downloads: hung.URL,
 		Engine:    policy.New(policy.Config{Cooldown: week}, nil),
-		HTTP:      proxy.NewUpstream(http.DefaultClient, "pkgwarden-test", time.Minute),
+		HTTP:      proxy.NewUpstream(http.DefaultClient, "pkgwarden-test", time.Minute, 64<<20),
 	})
 
 	start := time.Now()

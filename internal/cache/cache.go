@@ -8,21 +8,32 @@ import (
 
 type entry[V any] struct {
 	value   V
+	weight  int64
 	expires time.Time
+	timer   *time.Timer
 }
 
-// TTL is a size-bounded map whose entries expire after a fixed duration.
-// It is safe for concurrent use.
+// TTL is a map whose entries expire after a fixed duration and whose
+// entries' weights never sum past a budget. It is safe for concurrent use.
 type TTL[K comparable, V any] struct {
-	mu    sync.Mutex
-	ttl   time.Duration
-	max   int
-	items map[K]entry[V]
+	mu     sync.Mutex
+	ttl    time.Duration
+	budget int64
+	weight func(K, V) int64
+	used   int64
+	items  map[K]*entry[V]
 }
 
 // New returns a cache holding at most max entries for ttl each.
 func New[K comparable, V any](ttl time.Duration, max int) *TTL[K, V] {
-	return &TTL[K, V]{ttl: ttl, max: max, items: make(map[K]entry[V])}
+	return NewWeighted(ttl, int64(max), func(K, V) int64 { return 1 })
+}
+
+// NewWeighted returns a cache holding entries for ttl each, whose weights
+// sum to at most budget. It never stores an entry that weighs more than
+// half the budget, so one entry cannot empty the cache.
+func NewWeighted[K comparable, V any](ttl time.Duration, budget int64, weight func(K, V) int64) *TTL[K, V] {
+	return &TTL[K, V]{ttl: ttl, budget: budget, weight: weight, items: make(map[K]*entry[V])}
 }
 
 // Get returns the live value stored under key.
@@ -37,24 +48,38 @@ func (c *TTL[K, V]) Get(key K) (V, bool) {
 	return e.value, true
 }
 
-// Set stores value under key, evicting expired entries first and an
-// arbitrary entry if the cache is still full.
+// Set stores value under key, evicting arbitrary entries to stay within the
+// budget. The entry is deleted when it expires.
 func (c *TTL[K, V]) Set(key K, value V) {
+	w := c.weight(key, value)
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if _, exists := c.items[key]; !exists && len(c.items) >= c.max {
-		now := time.Now()
-		for k, e := range c.items {
-			if now.After(e.expires) {
-				delete(c.items, k)
-			}
-		}
-		for k := range c.items {
-			if len(c.items) < c.max {
-				break
-			}
-			delete(c.items, k)
-		}
+	c.delete(key)
+	if c.ttl <= 0 || 2*w > c.budget {
+		return
 	}
-	c.items[key] = entry[V]{value: value, expires: time.Now().Add(c.ttl)}
+	for k := range c.items {
+		if c.used+w <= c.budget {
+			break
+		}
+		c.delete(k)
+	}
+	e := &entry[V]{value: value, weight: w, expires: time.Now().Add(c.ttl)}
+	e.timer = time.AfterFunc(c.ttl, func() {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		if c.items[key] == e {
+			c.delete(key)
+		}
+	})
+	c.items[key] = e
+	c.used += w
+}
+
+func (c *TTL[K, V]) delete(key K) {
+	if e, ok := c.items[key]; ok {
+		e.timer.Stop()
+		c.used -= e.weight
+		delete(c.items, key)
+	}
 }
