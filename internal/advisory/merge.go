@@ -19,11 +19,26 @@ type merged []Source
 func Merge(sources ...Source) Source { return merged(sources) }
 
 func (m merged) Lookup(ctx context.Context, eco ecosystem.Ecosystem, name string) ([]Advisory, error) {
-	results := make([][]Advisory, len(m))
-	errs := make([]error, len(m))
+	return fold(len(m), func(i int) ([]Advisory, error) { return m[i].Lookup(ctx, eco, name) })
+}
+
+// LookupAll looks up one package under each name that advisories may file
+// it under, and folds the results as Merge does.
+func LookupAll(ctx context.Context, src Source, eco ecosystem.Ecosystem, names ...string) ([]Advisory, error) {
+	if len(names) == 1 {
+		return src.Lookup(ctx, eco, names[0])
+	}
+	return fold(len(names), func(i int) ([]Advisory, error) { return src.Lookup(ctx, eco, names[i]) })
+}
+
+// fold runs n lookups concurrently and folds what they found. When some
+// fail it still returns the others' advisories, alongside the joined errors.
+func fold(n int, lookup func(i int) ([]Advisory, error)) ([]Advisory, error) {
+	results := make([][]Advisory, n)
+	errs := make([]error, n)
 	var wg sync.WaitGroup
-	for i, src := range m {
-		wg.Go(func() { results[i], errs[i] = src.Lookup(ctx, eco, name) })
+	for i := range n {
+		wg.Go(func() { results[i], errs[i] = lookup(i) })
 	}
 	wg.Wait()
 	return dedupe(slices.Concat(results...)), errors.Join(errs...)

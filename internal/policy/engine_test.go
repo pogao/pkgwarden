@@ -199,6 +199,33 @@ func TestAdvisoryLookupFailure(t *testing.T) {
 	})
 }
 
+type sourceByName map[string][]advisory.Advisory
+
+func (s sourceByName) Lookup(_ context.Context, _ ecosystem.Ecosystem, name string) ([]advisory.Advisory, error) {
+	return s[name], nil
+}
+
+func TestAdvisoriesUnderBothNames(t *testing.T) {
+	both := advisory.Advisory{ID: "GO-2026-1", Source: "osv", Kind: advisory.Malicious, Ecosystem: ecosystem.Go, Versions: []string{"v1.0.0"}}
+	src := sourceByName{
+		"github.com/a/b": {both, {ID: "GO-2026-2", Source: "osv", Kind: advisory.Malicious, Ecosystem: ecosystem.Go, Versions: []string{"v1.1.0"}}},
+		"github.com/A/b": {both, {ID: "GO-2026-3", Source: "osv", Kind: advisory.Malicious, Ecosystem: ecosystem.Go, Versions: []string{"v1.2.0"}}},
+	}
+	pkg := &Package{Ecosystem: ecosystem.Go, Name: "github.com/A/b", Canonical: "github.com/a/b", Releases: []Release{
+		{Version: "v1.0.0", Published: daysAgo(90)},
+		{Version: "v1.1.0", Published: daysAgo(60)},
+		{Version: "v1.2.0", Published: daysAgo(30)},
+		{Version: "v1.3.0", Published: daysAgo(10)},
+	}}
+	a := newTestEngine(Config{}, src).Assess(context.Background(), pkg)
+	if v := assertDecision(t, a, "v1.0.0", Block); len(v.Findings) != 1 {
+		t.Errorf("an advisory filed under both names gave %d findings, want 1: %+v", len(v.Findings), v.Findings)
+	}
+	assertMentions(t, assertDecision(t, a, "v1.1.0", Block), "GO-2026-2")
+	assertMentions(t, assertDecision(t, a, "v1.2.0", Block), "GO-2026-3")
+	assertDecision(t, a, "v1.3.0", Allow)
+}
+
 // BenchmarkAssessDjangoSized matches advisories at the scale OSV reports for
 // django: 448 releases, and 320 advisories that enumerate about 18,000
 // affected versions and carry about 590 ranges.

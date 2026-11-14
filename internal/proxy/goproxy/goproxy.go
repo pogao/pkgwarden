@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/mod/modfile"
 	"golang.org/x/mod/module"
 	"golang.org/x/mod/semver"
 	"golang.org/x/sync/errgroup"
@@ -45,6 +46,8 @@ type Registry struct {
 	// .info never changes, and a module can list thousands of versions,
 	// more than the shared metadata cache holds.
 	times *cache.TTL[string, time.Time]
+	// canonical holds canonicalPath results by module@version.
+	canonical *cache.TTL[string, string]
 }
 
 // New returns a Registry, filling in defaults for empty Options fields.
@@ -53,7 +56,11 @@ func New(o Options) *Registry {
 		o.Upstream = "https://proxy.golang.org"
 	}
 	o.Upstream = strings.TrimSuffix(o.Upstream, "/")
-	return &Registry{o: o, times: cache.New[string, time.Time](24*time.Hour, 100_000)}
+	return &Registry{
+		o:         o,
+		times:     cache.New[string, time.Time](24*time.Hour, 100_000),
+		canonical: cache.New[string, string](24*time.Hour, 10_000),
+	}
 }
 
 // Ecosystem returns ecosystem.Go.
@@ -154,7 +161,43 @@ func (r *Registry) load(ctx context.Context, mod, extra string) (*policy.Package
 			pkg.Created = rel.Published
 		}
 	}
+	if pkg.Canonical, err = r.canonicalPath(ctx, mod, releases); err != nil {
+		return nil, nil, err
+	}
 	return pkg, listed, nil
+}
+
+// canonicalPath returns the module path that the go.mod of the newest
+// release declares, when it differs from mod only in case, and "" otherwise.
+// Hosts such as GitHub resolve a repository under any case of its owner and
+// name, so upstream serves the same module under each spelling, while
+// advisories name the declared path. Upstream synthesizes a go.mod that
+// declares mod for a version without one.
+func (r *Registry) canonicalPath(ctx context.Context, mod string, releases []policy.Release) (string, error) {
+	versions := make([]string, len(releases))
+	for i, rel := range releases {
+		versions[i] = rel.Version
+	}
+	v := newest(versions, func(string) bool { return true })
+	if v == "" {
+		return "", nil
+	}
+	if p, ok := r.canonical.Get(mod + "@" + v); ok {
+		return p, nil
+	}
+	b, err := r.o.HTTP.Fetch(ctx, r.fileURL(route{endpoint: modFile, module: mod, version: v}), nil)
+	if errors.Is(err, proxy.ErrNotFound) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	p := modfile.ModulePath(b)
+	if p == mod || !strings.EqualFold(p, mod) {
+		p = ""
+	}
+	r.canonical.Set(mod+"@"+v, p)
+	return p, nil
 }
 
 // publishTime reads the Time of a .info file. It returns the zero time

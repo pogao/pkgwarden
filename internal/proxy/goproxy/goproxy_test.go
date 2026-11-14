@@ -49,6 +49,7 @@ type fakeModule struct {
 	listed     []string
 	times      map[string]time.Time
 	infoStatus map[string]int
+	modStatus  map[string]int
 	latest     string
 	// goMod holds the module path a version's go.mod declares, when it is
 	// not the escaped request path.
@@ -102,6 +103,16 @@ var modules = map[string]fakeModule{
 		listed:     []string{"v1.0.0", "v1.1.0"},
 		times:      map[string]time.Time{"v1.0.0": old, "v1.1.0": old},
 		infoStatus: map[string]int{"v1.1.0": http.StatusInternalServerError},
+	},
+	"example.com/brokenmod": {
+		listed:    []string{"v1.0.0", "v1.1.0"},
+		times:     map[string]time.Time{"v1.0.0": old, "v1.1.0": old},
+		modStatus: map[string]int{"v1.1.0": http.StatusInternalServerError},
+	},
+	"example.com/nomod": {
+		listed:    []string{"v1.0.0"},
+		times:     map[string]time.Time{"v1.0.0": old},
+		modStatus: map[string]int{"v1.0.0": http.StatusNotFound},
 	},
 	"example.com/many":                         manyVersions(600),
 	"github.com/sirupsen/logrus":               logrus("github.com/sirupsen/logrus"),
@@ -172,6 +183,10 @@ func fakeProxy(t *testing.T, requests, infoHits *atomic.Int64) *httptest.Server 
 				w.WriteHeader(status)
 				return
 			}
+		}
+		if status, ok := m.modStatus[v]; ok && file[dot:] == ".mod" {
+			w.WriteHeader(status)
+			return
 		}
 		switch file[dot:] {
 		case ".info":
@@ -430,12 +445,30 @@ func TestCaseVariantGetsTheCanonicalAdvisories(t *testing.T) {
 	}
 }
 
-func TestInfoServerErrorFailsTheModule(t *testing.T) {
+func TestCanonicalPathIsFetchedOnce(t *testing.T) {
 	e := newEnv(t, nil)
-	for _, p := range []string{"@v/list", "@v/v1.0.0.zip"} {
-		if status, body := get(t, e.proxy.URL+"/go/example.com/broken/"+p); status != http.StatusBadGateway {
-			t.Errorf("%s: status %d body %q, want 502", p, status, body)
+	for i := range 2 {
+		before := e.requests.Load()
+		if status, body := get(t, e.proxy.URL+"/go/github.com/!sirupsen/logrus/@v/list"); status != http.StatusOK {
+			t.Fatalf("request %d: status %d body %q", i+1, status, body)
 		}
+		if n := e.requests.Load() - before; i == 1 && n != 0 {
+			t.Errorf("second list sent %d upstream requests, want 0", n)
+		}
+	}
+}
+
+func TestUpstreamServerErrorFailsTheModule(t *testing.T) {
+	e := newEnv(t, nil)
+	for _, mod := range []string{"example.com/broken", "example.com/brokenmod"} {
+		for _, p := range []string{"@v/list", "@v/v1.0.0.zip"} {
+			if status, body := get(t, e.proxy.URL+"/go/"+mod+"/"+p); status != http.StatusBadGateway {
+				t.Errorf("%s/%s: status %d body %q, want 502", mod, p, status, body)
+			}
+		}
+	}
+	if status, body := get(t, e.proxy.URL+"/go/example.com/nomod/@v/v1.0.0.zip"); status != http.StatusOK {
+		t.Errorf("a missing go.mod: status %d body %q, want 200", status, body)
 	}
 }
 

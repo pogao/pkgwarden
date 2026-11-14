@@ -103,7 +103,11 @@ func (e *Engine) cooldown(pkg *Package, a *Assessment) {
 }
 
 func (e *Engine) knownBad(ctx context.Context, pkg *Package, a *Assessment) {
-	advs, err := e.advisories.Lookup(ctx, pkg.Ecosystem, pkg.Name)
+	names := []string{pkg.Name}
+	if pkg.Canonical != "" {
+		names = append(names, pkg.Canonical)
+	}
+	advs, err := advisory.LookupAll(ctx, e.advisories, pkg.Ecosystem, names...)
 	if err != nil {
 		d := Block
 		if e.cfg.FailOpen {
