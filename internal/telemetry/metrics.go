@@ -86,6 +86,18 @@ var (
 		Namespace: "pkgwarden", Name: "openssf_refresh_failures_total",
 		Help: "Failed OpenSSF dataset refreshes.",
 	})
+	goIndexLastSuccess = metric.NewGauge(prometheus.GaugeOpts{
+		Namespace: "pkgwarden", Name: "go_index_last_success_timestamp_seconds",
+		Help: "Unix time up to which the last successful Go module index sync read the feed; 0 until the first.",
+	})
+	goIndexVersions = metric.NewGauge(prometheus.GaugeOpts{
+		Namespace: "pkgwarden", Name: "go_index_versions",
+		Help: "Module versions held from the Go module index, first seen inside the cooldown window.",
+	})
+	goIndexFailures = metric.NewCounter(prometheus.CounterOpts{
+		Namespace: "pkgwarden", Name: "go_index_sync_failures_total",
+		Help: "Failed Go module index syncs.",
+	})
 	policyInfo = metric.NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: "pkgwarden", Name: "policy_info",
 		Help: "The policy in effect, as labels on a constant 1.",
@@ -153,6 +165,16 @@ func RecordOpenSSFLoad(packages int, at time.Time) {
 
 // RecordOpenSSFFailure counts a failed OpenSSF dataset refresh.
 func RecordOpenSSFFailure() { openSSFFailures.Inc() }
+
+// RecordGoIndexSync records a successful Go module index sync that read the
+// feed up to through and holds versions entries.
+func RecordGoIndexSync(versions int, through time.Time) {
+	goIndexVersions.Set(float64(versions))
+	goIndexLastSuccess.Set(float64(through.Unix()))
+}
+
+// RecordGoIndexFailure counts a failed Go module index sync.
+func RecordGoIndexFailure() { goIndexFailures.Inc() }
 
 // Policy describes the policy in effect for the policy_info metric.
 type Policy struct {

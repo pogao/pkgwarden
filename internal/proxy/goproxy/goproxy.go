@@ -37,17 +37,25 @@ type Options struct {
 	Upstream string
 	Engine   *policy.Engine
 	HTTP     *proxy.Upstream
+	// Index, when set, makes the cooldown also count from when
+	// proxy.golang.org first served a version. Nil leaves the commit time
+	// as the only clock.
+	Index *Index
 }
 
 // Registry serves the GOPROXY protocol relative to its mount point.
 type Registry struct {
 	o Options
-	// times holds publish times by module@version. A canonical version's
+	// times holds .info times by module@version. A canonical version's
 	// .info never changes, and a module can list thousands of versions,
 	// more than the shared metadata cache holds.
-	times *cache.TTL[string, time.Time]
+	times *cache.TTL[string, infoTime]
 	// canonical holds canonicalPath results by module@version.
 	canonical *cache.TTL[string, string]
+}
+
+type infoTime struct {
+	published, fetched time.Time
 }
 
 // New returns a Registry, filling in defaults for empty Options fields.
@@ -58,7 +66,7 @@ func New(o Options) *Registry {
 	o.Upstream = strings.TrimSuffix(o.Upstream, "/")
 	return &Registry{
 		o:         o,
-		times:     cache.New[string, time.Time](24*time.Hour, 100_000),
+		times:     cache.New[string, infoTime](24*time.Hour, 100_000),
 		canonical: cache.New[string, string](24*time.Hour, 10_000),
 	}
 }
@@ -126,18 +134,26 @@ func (r *Registry) load(ctx context.Context, mod, extra string) (*policy.Package
 	}
 
 	var releases []policy.Release
+	var fetched time.Time
 	if len(versions) == 0 {
 		releases = []policy.Release{{Version: latest.Version, Published: latest.Time}}
+		if r.o.Index != nil {
+			in, ok := r.times.Get(mod + "@" + latest.Version)
+			if !ok {
+				in = infoTime{published: latest.Time, fetched: time.Now()}
+				r.times.Set(mod+"@"+latest.Version, in)
+			}
+			fetched = in.fetched
+		}
 	} else {
-		releases = make([]policy.Release, len(versions))
+		infos := make([]infoTime, len(versions))
 		g, gctx := errgroup.WithContext(ctx)
 		g.SetLimit(8)
 		for i, v := range versions {
-			releases[i].Version = v
-			t, ok := r.times.Get(mod + "@" + v)
+			in, ok := r.times.Get(mod + "@" + v)
 			telemetry.RecordCache("go_info", ok)
 			if ok {
-				releases[i].Published = t
+				infos[i] = in
 				continue
 			}
 			g.Go(func() error {
@@ -149,19 +165,31 @@ func (r *Registry) load(ctx context.Context, mod, extra string) (*policy.Package
 				if err != nil {
 					return err
 				}
+				// A release with no publish time is blocked anyway, so its
+				// fetch is not worth waiting on the index for.
 				if !t.IsZero() {
-					r.times.Set(mod+"@"+v, t)
+					infos[i] = infoTime{published: t, fetched: time.Now()}
+					r.times.Set(mod+"@"+v, infos[i])
 				}
-				releases[i].Published = t
 				return nil
 			})
 		}
 		if err := g.Wait(); err != nil {
 			return nil, nil, err
 		}
+		releases = make([]policy.Release, len(versions))
+		for i, v := range versions {
+			releases[i] = policy.Release{Version: v, Published: infos[i].published}
+			if infos[i].fetched.After(fetched) {
+				fetched = infos[i].fetched
+			}
+		}
 		if len(versions) > len(listed) && releases[len(listed)].Published.IsZero() {
 			releases = releases[:len(listed)]
 		}
+	}
+	if r.o.Index != nil {
+		r.o.Index.firstSeen(ctx, mod, releases, fetched)
 	}
 
 	pkg := &policy.Package{Ecosystem: ecosystem.Go, Name: mod, WeeklyDownloads: policy.UnknownDownloads, Releases: releases}
