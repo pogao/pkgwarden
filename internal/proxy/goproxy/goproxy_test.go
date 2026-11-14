@@ -67,6 +67,16 @@ func logrus(requested string) fakeModule {
 	}
 }
 
+// groupcache mimics github.com/golang/groupcache, which has no tags. pseudoV
+// predates its go.mod, so upstream synthesizes one with the requested path.
+func groupcache(requested string) fakeModule {
+	return fakeModule{
+		times:  map[string]time.Time{pseudoV: ancient, pseudoV2: old},
+		latest: pseudoV2,
+		goMod:  map[string]string{pseudoV: requested, pseudoV2: "github.com/golang/groupcache"},
+	}
+}
+
 func manyVersions(n int) fakeModule {
 	m := fakeModule{times: map[string]time.Time{}}
 	for i := range n {
@@ -119,6 +129,8 @@ var modules = map[string]fakeModule{
 	"github.com/!sirupsen/logrus":              logrus("github.com/Sirupsen/logrus"),
 	"github.com/!s!i!r!u!p!s!e!n/!l!o!g!r!u!s": logrus("github.com/SIRUPSEN/LOGRUS"),
 	"github.com/fork/logrus":                   logrus("github.com/fork/logrus"),
+	"github.com/golang/groupcache":             groupcache("github.com/golang/groupcache"),
+	"github.com/!golang/groupcache":            groupcache("github.com/Golang/groupcache"),
 }
 
 func infoJSON(v string, t time.Time) string {
@@ -411,10 +423,11 @@ func TestCheckAgreesWithZip(t *testing.T) {
 }
 
 func TestCaseVariantGetsTheCanonicalAdvisories(t *testing.T) {
-	e := newEnv(t, fakeSource{"github.com/sirupsen/logrus": {{
+	mal := advisory.Advisory{
 		ID: "MAL-2026-0001", Source: "osv", Kind: advisory.Malicious, Ecosystem: ecosystem.Go,
 		Ranges: []advisory.Range{{Introduced: "0", Fixed: "v1.9.3"}},
-	}}})
+	}
+	e := newEnv(t, fakeSource{"github.com/sirupsen/logrus": {mal}, "github.com/golang/groupcache": {mal}})
 	tests := []struct {
 		module, version, decision string
 		rules                     []string
@@ -426,6 +439,11 @@ func TestCaseVariantGetsTheCanonicalAdvisories(t *testing.T) {
 		// A fork whose go.mod still declares the original path is another
 		// repository, not a spelling of the original.
 		{"github.com/fork/logrus", "v1.0.3", "allow", nil},
+		// A module with no tags gets its declared path from @latest, not
+		// from the requested pseudo-version.
+		{"github.com/golang/groupcache", pseudoV, "block", []string{"advisory/malicious"}},
+		{"github.com/Golang/groupcache", pseudoV, "block", []string{"advisory/malicious"}},
+		{"github.com/Golang/groupcache", pseudoV2, "block", []string{"advisory/malicious"}},
 	}
 	for _, tt := range tests {
 		esc, err := module.EscapePath(tt.module)
