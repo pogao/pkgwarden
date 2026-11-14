@@ -137,12 +137,22 @@ pkgwarden adds these headers to every response that went through the policy. Tho
 | Header | Value |
 | --- | --- |
 | `X-Pkgwarden-Decision` | `allow`, `warn`, or `block`. On a metadata document it is the package verdict. On a file it is the release verdict. |
-| `X-Pkgwarden-Warning` | Sent only when the decision is `warn`. It joins every `warn` finding as `<rule>: <reason>`, separated by `; `. Its length is not capped. |
+| `X-Pkgwarden-Warning` | Sent only when the decision is `warn`. It lists the `warn` findings as `<rule>: <reason>`, separated by `; `, in at most 1,024 bytes of printable ASCII. |
 
-This header pair was captured on 2026-11-07 from a download of `requests-2.31.0-py3-none-any.whl`:
+pkgwarden keeps the warning header short, because clients and proxies reject a long one, and the download then fails with an error that does not mention pkgwarden. Node refuses more than 16 KiB of response headers, Python's `http.client` refuses a header line over 64 KiB, and nginx answers 502 when the upstream headers pass its default 4 KiB `proxy_buffer_size`.
+
+- Each `<rule>: <reason>` part longer than 160 bytes is cut to 157 bytes and ends with `...`.
+- When the next part would take the header past 964 bytes, pkgwarden stops and appends `and <N> more, see /api/v1/check`. N counts the `warn` findings not yet listed.
+- Each character outside printable ASCII becomes `?`.
+
+The `serving with warnings` log line keeps every reason in full. See [Read the logs](deployment.md#read-the-logs).
+
+This header pair was captured on 2026-11-14 from a download of `tensorflow-2.4.0-cp36-cp36m-macosx_10_11_x86_64.whl` with `-block-severity none`:
 
 	X-Pkgwarden-Decision: warn
-	X-Pkgwarden-Warning: advisory/vulnerability: GHSA-9hjg-9r4m-mvj7 (medium vulnerability, via osv): Requests vulnerable to .netrc credentials leak via malicious URLs https://osv.dev/vulnerability/GHSA-9hjg-9r4m-mvj7; advisory/vulnerability: GHSA-9wx4-h78v-vm56 (medium vulnerability, via osv): Requests `Session` object does not verify requests after making first request with verify=False https://osv.dev/vulnerability/GHSA-9wx4-h78v-vm56; advisory/vulnerability: GHSA-gc5v-m9x4-r6x2 (medium vulnerability, via osv): Requests has Insecure Temp File Reuse in its extract_zipped_paths() utility function https://osv.dev/vulnerability/GHSA-gc5v-m9x4-r6x2
+	X-Pkgwarden-Warning: advisory/vulnerability: OSV-2021-449 (unrated vulnerability, via osv): UNKNOWN READ in std::pair<absl::lts_NUMBER_02_25::container_internal::raw_hash_set<abs...; advisory/vulnerability: GHSA-23hm-7w47-xw72 (high vulnerability, via osv): Out of bounds read in Tensorflow https://osv.dev/vulnerability/GHSA-23hm-7w47-xw72; advisory/vulnerability: GHSA-2475-53vw-vp25 (medium vulnerability, via osv): TensorFlow vulnerable to `CHECK` fail in `AvgPoolGrad` https://osv.dev/vulnerabi...; advisory/vulnerability: GHSA-247x-2f9f-5wp7 (high vulnerability, via osv): Stack overflow in TensorFlow https://osv.dev/vulnerability/GHSA-247x-2f9f-5wp7; advisory/vulnerability: GHSA-24x4-6qmh-88qg (high vulnerability, via osv): Use after free in `DecodePng` kernel https://osv.dev/vulnerability/GHSA-24x4-6qmh-...; advisory/vulnerability: GHSA-24x6-8c7m-hv3f (low vulnerability, via osv): Heap OOB read in TFLite's implementation of `Minimum` or `Maximum` https://osv.dev/...; and 379 more, see /api/v1/check
+
+The full verdict for that release had 385 `warn` findings. The header lists 6, so N is 379.
 
 ## The 403 response
 

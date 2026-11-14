@@ -63,7 +63,7 @@ func Enforce(ctx context.Context, w http.ResponseWriter, f Format, stage Stage, 
 	case policy.Allow:
 		return true
 	case policy.Warn:
-		w.Header().Set("X-Pkgwarden-Warning", reasons(v))
+		w.Header().Set("X-Pkgwarden-Warning", warningHeader(v))
 		slog.WarnContext(ctx, "serving with warnings", verdictAttrs(stage, s, v, rules)...)
 		return true
 	}
@@ -111,24 +111,40 @@ func verdictAttrs(stage Stage, s Subject, v policy.Verdict, rules []string) []an
 // the go command replaces a longer body with "[Truncated: too long.]".
 const maxMessage = 600
 
+// maxWarning keeps the warning header far below the smallest header limit
+// in front of a client: nginx's default 4 KiB proxy buffer, which also
+// holds the upstream headers pkgwarden relays.
+const maxWarning = 1024
+
 func blockMessage(subject string, v policy.Verdict, requestID string) string {
 	var suffix string
 	if requestID != "" {
 		suffix = " (request " + requestID + ")"
 	}
-	msg, sep := "pkgwarden blocked "+subject, ": "
-	parts := decisive(v)
+	return shorten("pkgwarden blocked "+subject, ": ", decisive(v), maxMessage-len(suffix)) + suffix
+}
+
+func warningHeader(v policy.Verdict) string {
+	return strings.Map(func(r rune) rune {
+		if r < ' ' || r > '~' {
+			return '?'
+		}
+		return r
+	}, shorten("", "", decisive(v), maxWarning))
+}
+
+func shorten(msg, sep string, parts []string, limit int) string {
 	for i, part := range parts {
 		if len(part) > 160 {
 			part = strings.ToValidUTF8(part[:157], "") + "..."
 		}
-		if len(msg)+len(sep)+len(part) > maxMessage-60-len(suffix) {
-			return msg + fmt.Sprintf("%sand %d more, see /api/v1/check", sep, len(parts)-i) + suffix
+		if len(msg)+len(sep)+len(part) > limit-60 {
+			return msg + fmt.Sprintf("%sand %d more, see /api/v1/check", sep, len(parts)-i)
 		}
 		msg += sep + part
 		sep = "; "
 	}
-	return msg + suffix
+	return msg
 }
 
 func reasons(v policy.Verdict) string {

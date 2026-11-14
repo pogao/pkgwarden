@@ -80,6 +80,58 @@ func TestBlockMessageCountsOnlyBlockingFindings(t *testing.T) {
 	}
 }
 
+func TestWarningHeaderStaysShortAndASCII(t *testing.T) {
+	const findings = 400
+	var v policy.Verdict
+	for i := range findings {
+		v.Findings = append(v.Findings, policy.Finding{Rule: policy.RuleVulnerability, Decision: policy.Warn,
+			Reason: fmt.Sprintf("WARN-%03d (medium vulnerability, via osv): café\x7f ", i) + strings.Repeat("long summary ", 20)})
+	}
+	v.Decision = policy.Warn
+	logs := telemetrytest.CaptureLogs(t)
+	w := httptest.NewRecorder()
+	if !Enforce(context.Background(), w, Text, StageArtifact, Subject{Ecosystem: ecosystem.PyPI, Name: "tensorflow", Version: "2.4.0"}, v) {
+		t.Fatal("Enforce refused a warn verdict")
+	}
+	h := w.Header().Get("X-Pkgwarden-Warning")
+	if len(h) > 1024 {
+		t.Errorf("X-Pkgwarden-Warning is %d bytes, want at most 1024", len(h))
+	}
+	if i := strings.IndexFunc(h, func(r rune) bool { return r < ' ' || r > '~' }); i >= 0 {
+		t.Errorf("X-Pkgwarden-Warning has a byte outside printable ASCII at %d: %q", i, h)
+	}
+	listed := strings.Count(h, "WARN-")
+	if listed == 0 || listed == findings {
+		t.Fatalf("header lists %d of %d findings, want a truncated list: %q", listed, findings, h)
+	}
+	if want := fmt.Sprintf("; and %d more, see /api/v1/check", findings-listed); !strings.HasSuffix(h, want) {
+		t.Errorf("header %q does not end with %q", h, want)
+	}
+	logged := logs.Messages(t, "serving with warnings")
+	if len(logged) != 1 {
+		t.Fatalf("got %d serving with warnings lines, want 1", len(logged))
+	}
+	reasons, _ := logged[0]["reasons"].(string)
+	for i := range findings {
+		if !strings.Contains(reasons, fmt.Sprintf("WARN-%03d (medium vulnerability, via osv): café\x7f long summary", i)) {
+			t.Fatalf("log reasons leave out or alter finding %d", i)
+		}
+	}
+}
+
+func TestWarningHeaderListsFewFindingsInFull(t *testing.T) {
+	v := policy.Verdict{Decision: policy.Warn, Findings: []policy.Finding{
+		{Rule: policy.RuleVulnerability, Decision: policy.Warn, Reason: "GHSA-1 (low vulnerability, via osv): one"},
+		{Rule: policy.RuleVulnerability, Decision: policy.Warn, Reason: "GHSA-2 (medium vulnerability, via osv): two"},
+	}}
+	w := httptest.NewRecorder()
+	Enforce(context.Background(), w, JSON, StageArtifact, Subject{Ecosystem: ecosystem.Npm, Name: "left-pad", Version: "1.3.0"}, v)
+	want := "advisory/vulnerability: GHSA-1 (low vulnerability, via osv): one; advisory/vulnerability: GHSA-2 (medium vulnerability, via osv): two"
+	if got := w.Header().Get("X-Pkgwarden-Warning"); got != want {
+		t.Errorf("X-Pkgwarden-Warning %q, want %q", got, want)
+	}
+}
+
 func TestEnforceCountsDecisionsAndRules(t *testing.T) {
 	cooldown := policy.Finding{Rule: policy.RuleCooldown, Decision: policy.Block, Reason: "published 1d ago"}
 	malicious := policy.Finding{Rule: policy.RuleMalicious, Decision: policy.Block, Reason: "MAL-2026-1"}
