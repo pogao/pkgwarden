@@ -106,6 +106,54 @@
         "yanked_reason": null
       }
     ],
+    "1.0.1": [
+      {
+        "comment_text": "",
+        "core-metadata": false,
+        "digests": {
+          "blake2b_256": "3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d",
+          "md5": "e1d2c3b4a5f60718293a4b5c6d7e8f90",
+          "sha256": "1515151515151515151515151515151515151515151515151515151515151515"
+        },
+        "downloads": -1,
+        "filename": "demo_pkg-1.0.1.tar.gz",
+        "has_sig": false,
+        "md5_digest": "e1d2c3b4a5f60718293a4b5c6d7e8f90",
+        "packagetype": "sdist",
+        "python_version": "source",
+        "requires_python": ">=3.8",
+        "size": 34610,
+        "upload_time": "{{OLD}}",
+        "upload_time_iso_8601": "{{OLD}}",
+        "url": "{{FILES}}/packages/3c/4d/5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d/demo_pkg-1.0.1.tar.gz",
+        "yanked": false,
+        "yanked_reason": null
+      },
+      {
+        "comment_text": "",
+        "core-metadata": {
+          "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        },
+        "digests": {
+          "blake2b_256": "4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e",
+          "md5": "f2e3d4c5b6a70819203b4c5d6e7f8091",
+          "sha256": "1616161616161616161616161616161616161616161616161616161616161616"
+        },
+        "downloads": -1,
+        "filename": "demo_pkg-1.0.1-py3-none-any.whl",
+        "has_sig": false,
+        "md5_digest": "f2e3d4c5b6a70819203b4c5d6e7f8091",
+        "packagetype": "bdist_wheel",
+        "python_version": "py3",
+        "requires_python": ">=3.8",
+        "size": 11102,
+        "upload_time": "{{YOUNG}}",
+        "upload_time_iso_8601": "{{YOUNG}}",
+        "url": "{{FILES}}/packages/4d/5e/6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e/demo_pkg-1.0.1-py3-none-any.whl",
+        "yanked": false,
+        "yanked_reason": null
+      }
+    ],
     "1.1.0": [
       {
         "comment_text": "",
