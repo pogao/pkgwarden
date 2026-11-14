@@ -109,15 +109,24 @@ func (r *Registry) load(ctx context.Context, mod, extra string) (*policy.Package
 		versions = append(slices.Clip(listed), extra)
 	}
 
-	var releases []policy.Release
-	if len(versions) == 0 {
-		var latest info
-		if err := r.o.HTTP.FetchJSON(ctx, base+"/@latest", &latest); err != nil {
+	// head is the version whose go.mod names the module. It ignores extra,
+	// so that a zip, the list, and @latest all read the same go.mod.
+	head := newest(listed, func(string) bool { return true })
+	var latest info
+	if len(listed) == 0 {
+		err := r.o.HTTP.FetchJSON(ctx, base+"/@latest", &latest)
+		if err == nil && !semver.IsValid(latest.Version) {
+			err = fmt.Errorf("%s/@latest: invalid version %q", base, latest.Version)
+		}
+		// A zip names its version, so it does not need @latest to exist.
+		if err != nil && (extra == "" || !errors.Is(err, proxy.ErrNotFound)) {
 			return nil, nil, err
 		}
-		if !semver.IsValid(latest.Version) {
-			return nil, nil, fmt.Errorf("%s/@latest: invalid version %q", base, latest.Version)
-		}
+		head = latest.Version
+	}
+
+	var releases []policy.Release
+	if len(versions) == 0 {
 		releases = []policy.Release{{Version: latest.Version, Published: latest.Time}}
 	} else {
 		releases = make([]policy.Release, len(versions))
@@ -161,24 +170,19 @@ func (r *Registry) load(ctx context.Context, mod, extra string) (*policy.Package
 			pkg.Created = rel.Published
 		}
 	}
-	if pkg.Canonical, err = r.canonicalPath(ctx, mod, releases); err != nil {
+	if pkg.Canonical, err = r.canonicalPath(ctx, mod, head); err != nil {
 		return nil, nil, err
 	}
 	return pkg, listed, nil
 }
 
-// canonicalPath returns the module path that the go.mod of the newest
-// release declares, when it differs from mod only in case, and "" otherwise.
+// canonicalPath returns the module path that the go.mod of version v
+// declares, when it differs from mod only in case, and "" otherwise.
 // Hosts such as GitHub resolve a repository under any case of its owner and
 // name, so upstream serves the same module under each spelling, while
 // advisories name the declared path. Upstream synthesizes a go.mod that
 // declares mod for a version without one.
-func (r *Registry) canonicalPath(ctx context.Context, mod string, releases []policy.Release) (string, error) {
-	versions := make([]string, len(releases))
-	for i, rel := range releases {
-		versions[i] = rel.Version
-	}
-	v := newest(versions, func(string) bool { return true })
+func (r *Registry) canonicalPath(ctx context.Context, mod, v string) (string, error) {
 	if v == "" {
 		return "", nil
 	}

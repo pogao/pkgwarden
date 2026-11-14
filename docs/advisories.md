@@ -92,7 +92,7 @@ pkgwarden matches advisories only against releases that upstream reports. A vers
 
 Advisory databases file a Go module under the path its `go.mod` declares, such as `github.com/sirupsen/logrus`. OSV and GitHub match that path exactly. GitHub, GitLab, and Bitbucket resolve owner and repository names in any letter case, so `proxy.golang.org` serves the same repository under every spelling, such as `github.com/Sirupsen/logrus`.
 
-So that every spelling gets the same verdict, pkgwarden reads the `module` line of the `.mod` file of the module's newest version, served under the requested path. The newest version is the highest release, or the highest prerelease when the module has no release. If the declared path differs from the requested path only in letter case, pkgwarden looks advisories up under both paths and merges the results as [How results are merged](#how-results-are-merged) describes. The findings read the same as for the declared path. The 403 names the path the client asked for.
+So that every spelling gets the same verdict, pkgwarden reads the `module` line of the `.mod` file of the module's newest version, served under the requested path. The newest version is the highest listed release, or the highest listed prerelease when the module lists no release. When upstream lists no version, as for a module with no tags, the newest version is the one `@latest` names. A zip reads that same `.mod` whichever version it names, so a pseudo-version from before the repository added its `go.mod` gets the same verdict as `@latest`. If the declared path differs from the requested path only in letter case, pkgwarden looks advisories up under both paths and merges the results as [How results are merged](#how-results-are-merged) describes. The findings read the same as for the declared path. The 403 names the path the client asked for.
 
 This verdict was captured on 2026-11-14:
 
@@ -111,7 +111,7 @@ This verdict was captured on 2026-11-14:
 	  ]
 	}
 
-pkgwarden remembers the declared path of each module and newest version for 24 hours, for up to 10000 modules. A module costs one more `.mod` request when it publishes a new version or when 24 hours pass. A case variant also costs one more lookup in each advisory source, cached like any other for `-advisory-ttl`. If the `.mod` file answers 404 or 410, pkgwarden looks advisories up under the requested path alone. Any other failure fails the request with a 502, as a failed `.info` request does.
+pkgwarden remembers the declared path of each module and newest version for 24 hours, for up to 10000 modules. A module costs one more `.mod` request when it publishes a new version or when 24 hours pass. A zip of a module that lists no version also fetches `@latest`, cached like the version list for `-metadata-ttl`. A case variant also costs one more lookup in each advisory source, cached like any other for `-advisory-ttl`. If the `.mod` file answers 404 or 410, or `@latest` does for such a zip, pkgwarden looks advisories up under the requested path alone. Any other failure fails the request with a 502, as a failed `.info` request does.
 
 These cases remain out of reach:
 

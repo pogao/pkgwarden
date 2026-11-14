@@ -99,6 +99,8 @@ var modules = map[string]fakeModule{
 	},
 	"example.com/pseudo/old":   {times: map[string]time.Time{pseudoV: old}, latest: pseudoV},
 	"example.com/pseudo/young": {times: map[string]time.Time{pseudoV2: young}, latest: pseudoV2},
+	// lost has no @latest, as when upstream can no longer resolve a branch.
+	"example.com/pseudo/lost": {times: map[string]time.Time{pseudoV: old}},
 	"example.com/prerelease": {
 		listed: []string{"v0.1.0-alpha.1"},
 		times:  map[string]time.Time{"v0.1.0-alpha.1": old},
@@ -152,7 +154,7 @@ func fakeProxy(t *testing.T, requests, infoHits *atomic.Int64) *httptest.Server 
 		}
 		if esc, ok := strings.CutSuffix(p, "/@latest"); ok {
 			m, ok := modules[esc]
-			if !ok {
+			if !ok || m.latest == "" {
 				notFound()
 				return
 			}
@@ -306,6 +308,7 @@ func TestZip(t *testing.T) {
 		"example.com/!foo/bar/@v/" + pseudoV + ".zip",
 		"example.com/!foo/bar/@v/v2.0.0+incompatible.zip",
 		"example.com/pseudo/old/@v/" + pseudoV + ".zip",
+		"example.com/pseudo/lost/@v/" + pseudoV + ".zip",
 	}
 	for _, p := range allowed {
 		before := telemetrytest.Value(t, "pkgwarden_artifacts_served_total", map[string]string{"ecosystem": "go"})
@@ -465,13 +468,22 @@ func TestCaseVariantGetsTheCanonicalAdvisories(t *testing.T) {
 
 func TestCanonicalPathIsFetchedOnce(t *testing.T) {
 	e := newEnv(t, nil)
-	for i := range 2 {
-		before := e.requests.Load()
-		if status, body := get(t, e.proxy.URL+"/go/github.com/!sirupsen/logrus/@v/list"); status != http.StatusOK {
-			t.Fatalf("request %d: status %d body %q", i+1, status, body)
-		}
-		if n := e.requests.Load() - before; i == 1 && n != 0 {
-			t.Errorf("second list sent %d upstream requests, want 0", n)
+	tests := []struct {
+		path string
+		warm int64
+	}{
+		{"github.com/!sirupsen/logrus/@v/list", 0},
+		{"github.com/!golang/groupcache/@v/" + pseudoV + ".zip", 1},
+	}
+	for _, tt := range tests {
+		for i := range 2 {
+			before := e.requests.Load()
+			if status, body := get(t, e.proxy.URL+"/go/"+tt.path); status != http.StatusOK {
+				t.Fatalf("%s request %d: status %d body %q", tt.path, i+1, status, body)
+			}
+			if n := e.requests.Load() - before; i == 1 && n != tt.warm {
+				t.Errorf("%s: second request sent %d upstream requests, want %d", tt.path, n, tt.warm)
+			}
 		}
 	}
 }
