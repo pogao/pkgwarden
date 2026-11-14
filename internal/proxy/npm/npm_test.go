@@ -527,7 +527,17 @@ func TestOnlyRegistryEndpointsPassThrough(t *testing.T) {
 		return out
 	}
 
-	for _, path := range []string{"/npm/left-pad/x/y/z", "/npm/left-pad/-/", "/npm/left-pad/1.0.0/", "/npm/@acme/widget/-/widget-1.0.0.zip", "/npm/"} {
+	for _, path := range []string{
+		"/npm/left-pad/x/y/z", "/npm/left-pad/-/", "/npm/left-pad/1.0.0/", "/npm/@acme/widget/-/widget-1.0.0.zip", "/npm/",
+		// registry.npmjs.org answers /-/../left-pad with the unfiltered packument.
+		"/npm/-/%2e%2e/left-pad",
+		"/npm/-/%2E%2E/left-pad",
+		"/npm/-/%2e%2e/left-pad/-/left-pad-1.0.0.tgz",
+		"/npm/-/..%2fleft-pad",
+		"/npm/-/%2e/ping",
+		"/npm/-/%2fping",
+		"/npm/-/x%5c..%5cleft-pad",
+	} {
 		resp, body := get(t, srv.URL+path)
 		if saw := upstreamSaw(); resp.StatusCode != http.StatusNotFound || len(saw) != 0 {
 			t.Errorf("%s: status %d body %q, upstream saw %v, want 404 without an upstream request", path, resp.StatusCode, body, saw)
