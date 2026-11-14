@@ -56,7 +56,7 @@ To set up pip, uv, Poetry, Bundler, gem, Go, Cargo, pnpm, or Yarn, see [Point yo
 
 ## Development
 
-Run `go test -race ./...` for the unit tests and `scripts/e2e.sh` for the end-to-end check with real clients. See [Develop pkgwarden](docs/development.md).
+Run `go test -race ./...` for the unit tests and `scripts/e2e.sh` for the end-to-end check with real clients. GitHub Actions runs both on every pull request. See [Develop pkgwarden](docs/development.md).
 
 ## License
 
