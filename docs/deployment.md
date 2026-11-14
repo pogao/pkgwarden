@@ -114,7 +114,7 @@ Give the container 2 GiB of memory, and set `GOMEMLIMIT` to about 80% of the lim
 
 	docker run -p 8080:8080 -m 2g -e GOMEMLIMIT=1600MiB pkgwarden
 
-On Kubernetes, set `resources.limits.memory` and the `GOMEMLIMIT` environment variable the same way. If you change `-metadata-cache-bytes`, change the limit by the same amount.
+On Kubernetes, set `resources.limits.memory` and the `GOMEMLIMIT` environment variable the same way. If you change `-metadata-cache-bytes`, change the limit by the same amount. With `-go-index`, add about 100 MiB for a 7-day cooldown, and more for a longer one. See [What it costs](cooldown.md#what-it-costs).
 
 ## Read the logs
 
