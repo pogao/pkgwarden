@@ -86,16 +86,18 @@ func (e *Engine) allowlisted(pkg *Package) bool {
 	})
 }
 
-// cooldown blocks a release whose earliest upload is too young. A release
-// past the cooldown can still hold a younger file. That file is blocked on
-// its own, and the release warns about it while its other files are served.
+// cooldown blocks a release whose earliest upload is too young, counting
+// from the time upstream first served it when that is later. A release past
+// the cooldown can still hold a younger file. That file is blocked on its
+// own upload time, and the release warns about it while its other files are
+// served.
 func (e *Engine) cooldown(pkg *Package, a *Assessment) {
 	if e.cfg.Cooldown <= 0 {
 		return
 	}
 	now := e.now()
 	for _, r := range pkg.Releases {
-		if reason, young := e.tooYoung(r.Published, now); young {
+		if reason, young := e.releaseTooYoung(r, now); young {
 			a.flag(r.Version, Finding{Rule: RuleCooldown, Decision: Block, Reason: reason})
 			continue
 		}
@@ -107,6 +109,20 @@ func (e *Engine) cooldown(pkg *Package, a *Assessment) {
 			}
 		}
 	}
+}
+
+// releaseTooYoung is tooYoung for r, from FirstSeen when it is after a
+// known Published.
+func (e *Engine) releaseTooYoung(r Release, now time.Time) (string, bool) {
+	if r.Published.IsZero() || !r.FirstSeen.After(r.Published) {
+		return e.tooYoung(r.Published, now)
+	}
+	age := max(now.Sub(r.FirstSeen), 0)
+	if age >= e.cfg.Cooldown {
+		return "", false
+	}
+	return fmt.Sprintf("first seen upstream %s ago (%s), inside the %s cooldown",
+		humanDuration(age), r.FirstSeen.UTC().Format(time.RFC3339), humanDuration(e.cfg.Cooldown)), true
 }
 
 // tooYoung reports whether something published at t is inside the

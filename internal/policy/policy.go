@@ -32,6 +32,11 @@ type Release struct {
 	// Published is the upload time, the earliest one when the release has
 	// several files; zero when unknown.
 	Published time.Time
+	// FirstSeen is when upstream first served the release, by a clock the
+	// publisher does not control; zero when unknown. The cooldown measures
+	// the release's age from the later of Published and FirstSeen. Its Files
+	// keep their own upload times.
+	FirstSeen time.Time
 	// Files lists the release's files for registries that accept new files
 	// for an existing version, each at its own time. Nil means the release
 	// is one file uploaded at Published.
