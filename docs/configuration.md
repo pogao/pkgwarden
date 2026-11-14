@@ -151,7 +151,7 @@ The ecosystem is one of `npm`, `pypi`, `rubygems`, `go`, or `cargo`, in any case
 
 | Ecosystem | Name comparison |
 | --- | --- |
-| npm | Case-insensitive. |
+| npm | Exact. `jquery` and `jQuery` are different packages. |
 | PyPI | PEP 503. Case and runs of `-`, `_`, and `.` do not matter. |
 | RubyGems | Exact. |
 | Go | Exact module path. |

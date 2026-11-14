@@ -56,7 +56,7 @@ var popularIndexes = sync.OnceValue(func() map[ecosystem.Ecosystem]*popularIndex
 		for sc.Scan() {
 			line, _, _ := strings.Cut(sc.Text(), "#")
 			listed := strings.TrimSpace(line)
-			key := eco.Normalize(listed)
+			key := popularKey(eco, listed)
 			if key == "" || idx.listed[key] {
 				continue
 			}
@@ -74,16 +74,28 @@ type resemblance struct {
 	how     string
 }
 
+// popularKey is the form a name takes on the popular list. npm names are
+// case-sensitive, but npm no longer accepts new names with capital letters,
+// so a case variant of a listed name is a legacy package such as jQuery, not
+// a typosquat.
+func popularKey(eco ecosystem.Ecosystem, name string) string {
+	if eco == ecosystem.Npm {
+		return strings.ToLower(name)
+	}
+	return eco.Normalize(name)
+}
+
 // resembles reports whether name imitates a popular package of eco without
 // being one. A name differing from a popular one only in letter case is not
-// reported: registries that care fold case in Normalize, and Go module hosts
-// such as GitHub resolve case variants to the same repository.
+// reported: npm accepts no new mixed-case names, PyPI and Cargo fold case in
+// Normalize, and Go module hosts such as GitHub resolve case variants to the
+// same repository.
 func resembles(eco ecosystem.Ecosystem, name string) (resemblance, bool) {
 	idx := popularIndexes()[eco]
 	if idx == nil {
 		return resemblance{}, false
 	}
-	name = eco.Normalize(name)
+	name = popularKey(eco, name)
 	if idx.listed[name] {
 		return resemblance{}, false
 	}

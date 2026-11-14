@@ -113,7 +113,7 @@ This finding was captured on 2026-11-07:
 
 ## Caching and timeouts
 
-pkgwarden caches the merged result of each lookup for `-advisory-ttl`, keyed by ecosystem and normalized package name. The default is `1h`. The cache holds at most 10000 packages. When it is full, it drops expired entries first and then arbitrary ones.
+pkgwarden caches the merged result of each lookup for `-advisory-ttl`, keyed by ecosystem and normalized package name. npm names are exact, so `jQuery` and `jquery` have separate entries. The default is `1h`. The cache holds at most 10000 packages. When it is full, it drops expired entries first and then arbitrary ones.
 
 Concurrent lookups for the same package share one call to the sources. That call keeps running when the request that started it is cancelled, so the requests still waiting get the result. It has a 30-second timeout.
 
