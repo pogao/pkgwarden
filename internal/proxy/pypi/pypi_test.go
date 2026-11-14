@@ -34,7 +34,14 @@ var (
 	sdistPath     = "/files/packages/71/dc/2a1e4e5c8f0e0e3d4b8e9c7f9e5b2a1b6c4f3e2d1c0b9a8f7e6d5c4b3a29/demo_pkg-1.0.0.tar.gz"
 	metadataBytes = []byte("Metadata-Version: 2.1\nName: demo-pkg\nVersion: 1.0.0\n")
 	rootIndex     = "<!DOCTYPE html>\n<html><body><a href=\"/simple/demo-pkg/\">demo-pkg</a></body></html>\n"
+
+	// Release 1.0.1 has an sdist uploaded before the cooldown and a wheel
+	// uploaded inside it.
+	mixedSdistPath = "/files/packages/3c/4d/5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d/demo_pkg-1.0.1.tar.gz"
+	mixedWheelPath = "/files/packages/4d/5e/6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e/demo_pkg-1.0.1-py3-none-any.whl"
 )
+
+const youngWheelReason = "demo_pkg-1.0.1-py3-none-any.whl: published 2d ago, inside the 7d cooldown"
 
 const pipAccept = "application/vnd.pypi.simple.v1+json, application/vnd.pypi.simple.v1+html;q=0.1, text/html;q=0.01"
 
@@ -70,6 +77,9 @@ func setup(t *testing.T, src advisories, tweak func(*Options, *http.ServeMux)) (
 	mux.HandleFunc("GET /stats/api/packages/demo-pkg/recent", func(w http.ResponseWriter, _ *http.Request) { w.Write(stats) })
 	mux.HandleFunc("GET "+wheelPath, func(w http.ResponseWriter, _ *http.Request) { w.Write(wheelBytes) })
 	mux.HandleFunc("GET "+wheelPath+".metadata", func(w http.ResponseWriter, _ *http.Request) { w.Write(metadataBytes) })
+	for _, p := range []string{mixedSdistPath, mixedWheelPath, mixedWheelPath + ".metadata"} {
+		mux.HandleFunc("GET "+p, func(w http.ResponseWriter, _ *http.Request) { io.WriteString(w, p) })
+	}
 	mux.HandleFunc("GET /simple/{$}", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", r.Header.Get("Accept"))
 		io.WriteString(w, rootIndex)
@@ -155,7 +165,7 @@ func TestSimpleJSONListsOnlyAllowedReleases(t *testing.T) {
 	if page.Meta.APIVersion != "1.1" || page.Name != "demo-pkg" {
 		t.Errorf("meta %+v name %q", page.Meta, page.Name)
 	}
-	if want := []string{"0.8.0", "0.9.0", "1.0.0"}; !slices.Equal(page.Versions, want) {
+	if want := []string{"0.8.0", "0.9.0", "1.0.0", "1.0.1"}; !slices.Equal(page.Versions, want) {
 		t.Errorf("versions %v, want %v", page.Versions, want)
 	}
 	var names []string
@@ -164,7 +174,7 @@ func TestSimpleJSONListsOnlyAllowedReleases(t *testing.T) {
 		names = append(names, f.Filename)
 		byName[f.Filename] = f
 	}
-	if want := []string{"demo_pkg-0.8.0.tar.gz", "demo_pkg-0.9.0.tar.gz", "demo_pkg-1.0.0-py3-none-any.whl", "demo_pkg-1.0.0.tar.gz"}; !slices.Equal(names, want) {
+	if want := []string{"demo_pkg-0.8.0.tar.gz", "demo_pkg-0.9.0.tar.gz", "demo_pkg-1.0.0-py3-none-any.whl", "demo_pkg-1.0.0.tar.gz", "demo_pkg-1.0.1.tar.gz"}; !slices.Equal(names, want) {
 		t.Errorf("files %v, want %v", names, want)
 	}
 
@@ -206,6 +216,7 @@ func TestSimpleHTML(t *testing.T) {
 			`" data-dist-info-metadata="sha256=` + strings.Repeat("c", 64) + `">demo_pkg-1.0.0-py3-none-any.whl</a>`,
 		`<a href="` + base + `/pypi/files/demo-pkg/0.9.0/demo_pkg-0.9.0.tar.gz#sha256=` + strings.Repeat("90", 32) +
 			`" data-yanked="broken &lt;build&gt; &amp; bad metadata">demo_pkg-0.9.0.tar.gz</a>`,
+		`>demo_pkg-1.0.1.tar.gz</a>`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("page lacks %s\n%s", want, body)
@@ -213,6 +224,9 @@ func TestSimpleHTML(t *testing.T) {
 	}
 	if strings.Contains(body, "1.1.0") {
 		t.Errorf("page lists the release inside the cooldown:\n%s", body)
+	}
+	if strings.Contains(body, "demo_pkg-1.0.1-py3-none-any.whl") {
+		t.Errorf("page lists the wheel uploaded inside the cooldown:\n%s", body)
 	}
 }
 
@@ -264,6 +278,9 @@ func TestFiles(t *testing.T) {
 		{"allowed wheel streams upstream bytes", "/pypi/files/demo-pkg/1.0.0/demo_pkg-1.0.0-py3-none-any.whl", http.StatusOK, wheelBytes, "", true},
 		{"PEP 658 metadata", "/pypi/files/demo-pkg/1.0.0/demo_pkg-1.0.0-py3-none-any.whl.metadata", http.StatusOK, metadataBytes, "", false},
 		{"release inside cooldown", "/pypi/files/demo-pkg/1.1.0/demo_pkg-1.1.0-py3-none-any.whl", http.StatusForbidden, nil, "cooldown", false},
+		{"old sdist of a release with a young wheel", "/pypi/files/demo-pkg/1.0.1/demo_pkg-1.0.1.tar.gz", http.StatusOK, []byte(mixedSdistPath), "", true},
+		{"wheel uploaded inside cooldown to an old release", "/pypi/files/demo-pkg/1.0.1/demo_pkg-1.0.1-py3-none-any.whl", http.StatusForbidden, nil, "cooldown: " + youngWheelReason, false},
+		{"metadata of that wheel", "/pypi/files/demo-pkg/1.0.1/demo_pkg-1.0.1-py3-none-any.whl.metadata", http.StatusForbidden, nil, "cooldown: " + youngWheelReason, false},
 		{"unpublished version", "/pypi/files/demo-pkg/9.9.9/demo_pkg-9.9.9.tar.gz", http.StatusForbidden, nil, "not published upstream", false},
 		{"filename from another release", "/pypi/files/demo-pkg/1.0.0/demo_pkg-1.1.0-py3-none-any.whl", http.StatusNotFound, nil, "", false},
 		{"metadata upstream lacks", "/pypi/files/demo-pkg/1.0.0/demo_pkg-1.0.0.tar.gz.metadata", http.StatusNotFound, nil, "", false},
@@ -351,6 +368,27 @@ func TestPackageWideAdvisoryBlocks(t *testing.T) {
 	}
 }
 
+func TestCheckNamesFilesInsideCooldown(t *testing.T) {
+	_, base := setup(t, nil, nil)
+	resp := get(t, base+"/api/v1/check?ecosystem=pypi&name=demo-pkg&version=1.0.1", "")
+	type finding struct{ Rule, Decision, Reason string }
+	var res struct {
+		Decision string
+		Findings []finding
+	}
+	if err := json.Unmarshal(resp.body, &res); err != nil {
+		t.Fatalf("status %d body %s: %v", resp.status, resp.body, err)
+	}
+	if want := []finding{{"cooldown", "warn", youngWheelReason}}; res.Decision != "warn" || !slices.Equal(res.Findings, want) {
+		t.Errorf("check: decision %q findings %+v, want warn with %+v", res.Decision, res.Findings, want)
+	}
+
+	sdist := get(t, base+"/pypi/files/demo-pkg/1.0.1/demo_pkg-1.0.1.tar.gz", "")
+	if d, w := sdist.header.Get("X-Pkgwarden-Decision"), sdist.header.Get("X-Pkgwarden-Warning"); d != "warn" || w != "cooldown: "+youngWheelReason {
+		t.Errorf("sdist beside the held-back wheel: decision %q warning %q", d, w)
+	}
+}
+
 func TestRootIndexPassesThrough(t *testing.T) {
 	_, base := setup(t, nil, nil)
 	resp := get(t, base+"/pypi/simple/", "text/html")
@@ -378,7 +416,7 @@ func TestPackage(t *testing.T) {
 	if pkg.Ecosystem != ecosystem.PyPI || pkg.Name != "demo-pkg" || pkg.WeeklyDownloads != 40321 || !pkg.Created.Equal(older) {
 		t.Errorf("package %s/%s downloads %d created %v", pkg.Ecosystem, pkg.Name, pkg.WeeklyDownloads, pkg.Created)
 	}
-	want := map[string]time.Time{"0.8.0": older, "0.9.0": older, "1.0.0": old, "1.1.0": young}
+	want := map[string]time.Time{"0.8.0": older, "0.9.0": older, "1.0.0": old, "1.0.1": old, "1.1.0": young}
 	if len(pkg.Releases) != len(want) {
 		t.Errorf("releases %+v, want versions of %v", pkg.Releases, want)
 	}

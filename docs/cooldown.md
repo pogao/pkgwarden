@@ -13,7 +13,7 @@ The cooldown check runs on each release of a package. It produces a finding with
 
 Ages under one day print as hours and minutes, such as `3h42m0s`. Longer ages print as days and hours, such as `7d` or `2d5h`. A publish time in the future counts as an age of zero, so the release is blocked with `published 0s ago`.
 
-The cooldown never warns. A release is either old enough or blocked.
+A release that is past the cooldown can still hold a file that is not. That happens on PyPI and RubyGems, which take new files for an existing version at any time. pkgwarden holds that file back and serves the rest of the release. See [Files added to an old release](#files-added-to-an-old-release).
 
 An allowlisted package skips the cooldown along with every other check. See [`-allow`](configuration.md#-allow).
 
@@ -24,16 +24,31 @@ The age is the time between now and the publish time the adapter reads from upst
 | Ecosystem | Publish time of a release |
 | --- | --- |
 | npm | The version's entry in the packument's `time` object. |
-| PyPI | The earliest `upload_time_iso_8601` among the release's files in `https://pypi.org/pypi/<project>/json`. |
-| RubyGems | The earliest `created_at` among the version's platform entries in `https://rubygems.org/api/v1/versions/<gem>.json`. |
+| PyPI | The earliest `upload_time_iso_8601` among the release's files in `https://pypi.org/pypi/<project>/json`. Each file also keeps its own `upload_time_iso_8601`. |
+| RubyGems | The earliest `created_at` among the version's platform entries in `https://rubygems.org/api/v1/versions/<gem>.json`. Each platform gem also keeps its own `created_at`. |
 | Go | The `Time` field of the version's `.info` file from `https://proxy.golang.org`. A listed version whose `.info` answers 404 or 410 has an unknown publish time. An unlisted version whose `.info` answers 404 or 410 is not published, so it gets `unknown-release` instead. |
 | Cargo | The version's `created_at` in `https://crates.io/api/v1/crates/<crate>`. |
 
-These sources set three limits.
+These sources set two limits.
 
 - Go's `.info` time is the commit time, not the time the version was tagged or first fetched. A new tag on an old commit passes the cooldown at once.
-- A PyPI file uploaded later to an old release is judged by the release's first upload. The same holds for a RubyGems platform gem pushed later for an existing version.
 - A PyPI release with no files is not a release to pkgwarden. The adapter drops it before the engine sees it.
+
+## Files added to an old release
+
+PyPI accepts a new file for an existing release at any time, such as a wheel for a new Python version. RubyGems accepts a new platform gem, such as `x86_64-linux`, for an existing version. Installers pick the new file up without a version change, so the cooldown applies to each file's own upload time as well as to the release.
+
+A file uploaded less than `-cooldown` ago, to a release whose earliest file is older, is held back:
+
+- The PyPI project page leaves the file out, in both its HTML and its JSON form. The RubyGems `/info/<gem>` file leaves out the line for that platform.
+- A download of the file gets a 403 with rule `cooldown`. So does its PEP 658 `.metadata` file on PyPI, and its `/gems/`, `/downloads/`, and `quick/Marshal.4.8` gemspec URLs on RubyGems.
+- The rest of the release is served. Its verdict is `warn`, with one `cooldown` finding at `warn` for each held-back file. `/api/v1/check` reports it, and downloads of the release's other files carry it in `X-Pkgwarden-Warning`.
+
+The block on the file and the warning on the release give the same reason, which starts with the file name, such as `demo_pkg-1.0.1-py3-none-any.whl: published 2d ago, inside the 7d cooldown`. A file with no upload time is held back with `<file>: publish time unknown, so the cooldown cannot be verified`.
+
+When the release's earliest file is itself inside the cooldown, the whole release is blocked as before. Its files then carry only the release's finding. The heuristics keep using the earliest upload as the release's publish time.
+
+A release whose files are uploaded over several hours becomes available one file at a time. Wheels built by CI often arrive this way.
 
 ## How to change or disable it
 

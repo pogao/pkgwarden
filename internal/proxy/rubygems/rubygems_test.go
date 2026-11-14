@@ -13,6 +13,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -280,6 +281,49 @@ func TestArtifactEnforcement(t *testing.T) {
 				t.Errorf("status %d body %q, want %d %q", resp.status, resp.body, tt.wantStatus, tt.wantBody)
 			}
 		})
+	}
+}
+
+func TestPlatformGemPushedLaterWaitsOutCooldown(t *testing.T) {
+	gem := nokogiri(t)
+	gem.versions = []fakeVersion{
+		{number: "1.15.0", platform: "x86_64-linux", age: 2 * day},
+		{number: "1.15.0", age: 30 * day},
+	}
+	srv := newProxy(t, map[string]fakeGem{"nokogiri": gem}, nil)
+	const reason = "nokogiri-1.15.0-x86_64-linux.gem: published 2d ago, inside the 7d cooldown"
+
+	lines := strings.SplitAfter(string(gem.info), "\n")
+	info := get(t, "GET", srv.URL+"/rubygems/info/nokogiri", nil)
+	if want := lines[0] + lines[2]; info.status != http.StatusOK || string(info.body) != want {
+		t.Errorf("info: status %d body:\n%s\nwant only the ruby line:\n%s", info.status, info.body, want)
+	}
+	for _, path := range []string{
+		"/gems/nokogiri-1.15.0-x86_64-linux.gem",
+		"/downloads/nokogiri-1.15.0-x86_64-linux.gem",
+		"/quick/Marshal.4.8/nokogiri-1.15.0-x86_64-linux.gemspec.rz",
+	} {
+		resp := get(t, "GET", srv.URL+"/rubygems"+path, nil)
+		if want := "pkgwarden blocked rubygems/nokogiri@1.15.0: cooldown: " + reason + "\n"; resp.status != http.StatusForbidden || string(resp.body) != want {
+			t.Errorf("%s: status %d body %q, want 403 %q", path, resp.status, resp.body, want)
+		}
+	}
+	ruby := get(t, "GET", srv.URL+"/rubygems/gems/nokogiri-1.15.0.gem", nil)
+	if d := ruby.header.Get("X-Pkgwarden-Decision"); ruby.status != http.StatusOK || d != "warn" || string(ruby.body) != string(artifactBytes("nokogiri-1.15.0.gem")) {
+		t.Errorf("ruby gem: status %d decision %q, want 200 warn with the gem", ruby.status, d)
+	}
+
+	check := get(t, "GET", srv.URL+"/api/v1/check?ecosystem=rubygems&name=nokogiri&version=1.15.0", nil)
+	type finding struct{ Rule, Decision, Reason string }
+	var res struct {
+		Decision string
+		Findings []finding
+	}
+	if err := json.Unmarshal(check.body, &res); err != nil {
+		t.Fatalf("check: status %d body %s: %v", check.status, check.body, err)
+	}
+	if want := []finding{{"cooldown", "warn", reason}}; res.Decision != "warn" || !slices.Equal(res.Findings, want) {
+		t.Errorf("check: decision %q findings %+v, want warn with %+v", res.Decision, res.Findings, want)
 	}
 }
 

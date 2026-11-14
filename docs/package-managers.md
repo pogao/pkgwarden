@@ -104,7 +104,8 @@ For Poetry, add pkgwarden as the primary source of the project:
 ### What pkgwarden filters
 
 - The project page at `/pypi/simple/<project>/` lists only the files of allowed releases. pkgwarden builds it from the PyPI JSON API and serves PEP 691 JSON or PEP 503 HTML, as the client's `Accept` header asks. It keeps hashes, `requires-python`, yanked flags, and PEP 658 metadata links.
-- A file download at `/pypi/files/<project>/<version>/<file>` is checked against its release. pkgwarden serves it only from the URL PyPI's metadata records for that file.
+- A file uploaded inside the cooldown is left off the page, even when the other files of its release are older and stay listed. See [Files added to an old release](cooldown.md#files-added-to-an-old-release).
+- A file download at `/pypi/files/<project>/<version>/<file>` is checked against its release and against the file's own upload time. pkgwarden serves it only from the URL PyPI's metadata records for that file.
 - A project name that is not PEP 503 normalized, or a page URL without the trailing `/`, gets a 301 to the normalized URL.
 - The root index at `/pypi/simple/` passes through, but its links do not work through pkgwarden. pip and uv do not need it to install.
 
@@ -147,6 +148,7 @@ For the gem command, replace the default source:
 ### What pkgwarden filters
 
 - The compact index file at `/rubygems/info/<gem>` loses the lines of blocked versions. Bundler and `gem install` resolve against it.
+- The info file also loses the line of a platform gem pushed inside the cooldown, even when the other gems of its version are older and keep their lines. The downloads of that platform gem get a 403. See [Files added to an old release](cooldown.md#files-added-to-an-old-release).
 - A gem blocked at package level gets an info file that holds only `---`, so the client sees a gem with no versions. [How pkgwarden works](how-it-works.md#a-fully-blocked-gem-gets-an-empty-info-file) explains why it is not a 403.
 - Downloads of `.gem` files and of `quick/Marshal.4.8/*.gemspec.rz` files are checked against their version. A `.gem` file is checked at both of its rubygems.org URLs, `/gems/<file>.gem` and `/downloads/<file>.gem`.
 - A trailing slash, an extra segment, or a file name without the `.gem` or `.gemspec.rz` suffix on one of these paths, such as `/info/<gem>/` or `/gems/<file>.gem%3F`, gets 404. rubygems.org answers `/info/<gem>/` with the unfiltered file.

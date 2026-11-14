@@ -27,7 +27,7 @@ The middleware that assigns the ID and the transport under the upstream HTTP cli
 
 The engine only sees two types, defined in `internal/policy/policy.go`.
 
-A `Package` has an ecosystem, a name, the time it was first published, a weekly download estimate, and a list of releases. A `Release` has a version, its publish time, the accounts that published it, and whether installing it runs install scripts.
+A `Package` has an ecosystem, a name, the time it was first published, a weekly download estimate, and a list of releases. A `Release` has a version, its publish time, the accounts that published it, and whether installing it runs install scripts. PyPI and RubyGems releases also list their files, each with its own upload time, because those registries accept new files for an existing version.
 
 Registries do not publish the same facts, so adapters leave fields empty when upstream has nothing. Go reports no download counts, so its `WeeklyDownloads` is `UnknownDownloads`. PyPI, RubyGems, and Go name no publisher per release, so `Publishers` is nil there. A check that needs a missing field does not fire. The [heuristics reference](heuristics.md#what-data-each-ecosystem-provides) lists what each adapter fills in.
 
@@ -43,6 +43,8 @@ An `Assessment` holds two kinds of verdict:
 - Each release verdict carries findings for that version only, such as a cooldown block or a vulnerability whose range covers it.
 
 `Assessment.Release(version)` merges the package verdict into the release verdict. A version that upstream did not report gets an `unknown-release` block. That rule catches a request for a version that was unpublished or never existed, such as a lockfile entry for a release the registry removed.
+
+`Assessment.File(version, name)` returns the release verdict plus a `cooldown` block when that file is younger than the cooldown and its release is not. The PyPI and RubyGems adapters filter and refuse files with it. See [Files added to an old release](cooldown.md#files-added-to-an-old-release).
 
 A download request repeats the assessment for the whole package. The upstream metadata and the advisory results come from caches, so the repeat costs little after the first request.
 
