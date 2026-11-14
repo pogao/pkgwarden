@@ -99,6 +99,22 @@ These timeouts apply to outbound requests:
 
 pkgwarden reads at most 128 MiB of a metadata document and drops the rest. A JSON document cut this way fails to parse.
 
+## Give it enough memory
+
+pkgwarden's memory has three parts:
+
+- The metadata cache, which holds at most `-metadata-cache-bytes` (default 256 MiB).
+- Rewriting npm packuments. To answer a packument request, pkgwarden parses the packument and writes it out again without the blocked versions. The rewrite needs about ten times the packument's size in memory while it runs. pkgwarden rewrites at most 64 MiB of packuments at a time, or one larger packument alone, so concurrent requests wait for each other instead of adding up.
+- The responses in progress, each about the size of the document it sends.
+
+The largest packument in common use is renovate's, at about 75 MB. In seven runs on 2026-11-14, pkgwarden first filled its cache to about the default budget with eleven of the largest packuments on npm. Then it answered 16 concurrent packument requests and 16 concurrent tarball requests for renovate. Its resident memory peaked between 1.6 and 1.8 GB.
+
+Give the container 2 GiB of memory, and set `GOMEMLIMIT` to about 80% of the limit, so that the Go garbage collector works harder before the container runs out:
+
+	docker run -p 8080:8080 -m 2g -e GOMEMLIMIT=1600MiB pkgwarden
+
+On Kubernetes, set `resources.limits.memory` and the `GOMEMLIMIT` environment variable the same way. If you change `-metadata-cache-bytes`, change the limit by the same amount.
+
 ## Read the logs
 
 pkgwarden writes one JSON object per line to stderr. Each line has `time`, `level`, and `msg`. A line logged while pkgwarden handles a request also has `request_id`, right after `msg`. It is the same ID that the response carries in `X-Request-Id`. To follow one request through these lines, see [Follow one request through the logs](observability.md#follow-one-request-through-the-logs).
@@ -209,6 +225,7 @@ spec:
 
 - pkgwarden stores no artifacts. Every allowed download streams from the upstream registry. When a registry is down, installs from it fail.
 - Every cache is in memory and empty after a restart, so the first requests after a restart are slower.
+- pkgwarden rewrites npm packuments over 64 MiB one at a time, and other packument requests that arrive meanwhile wait behind them. In three runs, 16 concurrent requests for renovate's 75 MB packument took 14 to 15 seconds to finish, about one second each. See [Give it enough memory](#give-it-enough-memory).
 - The upstream registries are fixed to the public ones. pkgwarden cannot front a private registry.
 - The RubyGems legacy indexes pass through unfiltered. See [Bundler and gem](package-managers.md#bundler-and-gem).
 - The popular-package lists for typosquat detection are built into the binary. Refreshing them needs a new build. See [Refresh the popular-package lists](development.md#refresh-the-popular-package-lists).

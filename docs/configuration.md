@@ -136,7 +136,7 @@ How long pkgwarden caches each upstream metadata document, such as a packument, 
 
 The most memory, in bytes, that the metadata cache holds. Each document counts as its size plus about 256 bytes. An npm packument also counts about 256 bytes for each version, for the facts that pkgwarden parses from it. When a new document does not fit, pkgwarden drops arbitrary cached documents until it does. pkgwarden never caches a document that counts more than half the budget, so one document cannot empty the cache. pkgwarden fetches such a document again for every request, and concurrent requests for it still share one fetch. `0` or a negative value turns the cache off.
 
-The default of 256 MiB holds the largest packument in common use, renovate at about 75 MB, along with many smaller documents. A budget below about 150 MiB leaves renovate out, and then every download of such a package fetches and parses its packument again.
+The default of 256 MiB holds the largest packument in common use, renovate at about 75 MB, along with many smaller documents. A budget below about 150 MiB leaves renovate out, and then every download of such a package fetches and parses its packument again. To size the container around the budget, see [Give it enough memory](deployment.md#give-it-enough-memory).
 
 ## Policy flags
 
