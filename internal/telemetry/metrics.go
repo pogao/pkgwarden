@@ -86,6 +86,22 @@ var (
 		Namespace: "pkgwarden", Name: "openssf_refresh_failures_total",
 		Help: "Failed OpenSSF dataset refreshes.",
 	})
+	goIndexNewest = metric.NewGauge(prometheus.GaugeOpts{
+		Namespace: "pkgwarden", Name: "go_index_newest_entry_timestamp_seconds",
+		Help: "Unix time of the newest Go module index entry read, by the index's clock; 0 until the first sync reaches the head of the feed.",
+	})
+	goIndexVersions = metric.NewGauge(prometheus.GaugeOpts{
+		Namespace: "pkgwarden", Name: "go_index_versions",
+		Help: "Module versions held from the Go module index, first seen inside the cooldown window.",
+	})
+	goIndexFailures = metric.NewCounter(prometheus.CounterOpts{
+		Namespace: "pkgwarden", Name: "go_index_sync_failures_total",
+		Help: "Failed Go module index syncs.",
+	})
+	goIndexFallbacks = metric.NewCounter(prometheus.CounterOpts{
+		Namespace: "pkgwarden", Name: "go_index_fallbacks_total",
+		Help: "Go loads judged by commit time after the first Go module index sync, because the index was not read past their .info fetches in time.",
+	})
 	policyInfo = metric.NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: "pkgwarden", Name: "policy_info",
 		Help: "The policy in effect, as labels on a constant 1.",
@@ -153,6 +169,20 @@ func RecordOpenSSFLoad(packages int, at time.Time) {
 
 // RecordOpenSSFFailure counts a failed OpenSSF dataset refresh.
 func RecordOpenSSFFailure() { openSSFFailures.Inc() }
+
+// RecordGoIndexSync records a successful Go module index sync that holds
+// versions entries, the newest of them from newest.
+func RecordGoIndexSync(versions int, newest time.Time) {
+	goIndexVersions.Set(float64(versions))
+	goIndexNewest.Set(float64(newest.Unix()))
+}
+
+// RecordGoIndexFailure counts a failed Go module index sync.
+func RecordGoIndexFailure() { goIndexFailures.Inc() }
+
+// RecordGoIndexFallback counts a Go load judged by commit time because the
+// Go module index was behind it.
+func RecordGoIndexFallback() { goIndexFallbacks.Inc() }
 
 // Policy describes the policy in effect for the policy_info metric.
 type Policy struct {

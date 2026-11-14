@@ -27,7 +27,7 @@ The middleware that assigns the ID and the transport under the upstream HTTP cli
 
 The engine only sees two types, defined in `internal/policy/policy.go`.
 
-A `Package` has an ecosystem, a name, the time it was first published, a weekly download estimate, and a list of releases. A `Release` has a version, its publish time, the accounts that published it, and whether installing it runs install scripts. PyPI and RubyGems releases also list their files, each with its own upload time, because those registries accept new files for an existing version.
+A `Package` has an ecosystem, a name, the time it was first published, a weekly download estimate, and a list of releases. A `Release` has a version, its publish time, the time upstream first served it, the accounts that published it, and whether installing it runs install scripts. Only the Go adapter with `-go-index` fills in the first-seen time. PyPI and RubyGems releases also list their files, each with its own upload time, because those registries accept new files for an existing version.
 
 Registries do not publish the same facts, so adapters leave fields empty when upstream has nothing. Go reports no download counts, so its `WeeklyDownloads` is `UnknownDownloads`. PyPI, RubyGems, and Go name no publisher per release, so `Publishers` is nil there. A check that needs a missing field does not fire. The [heuristics reference](heuristics.md#what-data-each-ecosystem-provides) lists what each adapter fills in.
 
@@ -78,13 +78,14 @@ A 403 on an info file makes Bundler give up on the compact index for the whole s
 
 ## Caching keeps upstream traffic low
 
-pkgwarden keeps five caches in memory. None survives a restart. `pkgwarden_cache_requests_total` counts the hits and misses of the first three, and the `pkgwarden_openssf_` metrics show the state of the last. `pkgwarden_advisory_source_enabled{source="openssf"}` is `1` only when the last exists.
+pkgwarden keeps up to six caches in memory. None survives a restart. `pkgwarden_cache_requests_total` counts the hits and misses of the first three, and the `pkgwarden_openssf_` and `pkgwarden_go_index_` metrics show the state of the last two. `pkgwarden_advisory_source_enabled{source="openssf"}` is `1` only when the fifth exists.
 
 - pkgwarden caches upstream metadata, such as packuments, index files, version lists, and download counts, for `-metadata-ttl` (default 5 minutes), and frees each one when it expires. The cache holds at most `-metadata-cache-bytes` (default 256 MiB). For an npm packument it keeps the facts the policy needs next to the document, so a tarball request parses nothing. Concurrent requests for the same document share one upstream round trip and one parse.
 - pkgwarden caches advisory lookups per ecosystem and package name for `-advisory-ttl` (default 1 hour). The cache holds at most 10000 packages. A failed lookup is not cached, so the next request tries again.
 - The Go adapter caches the publish time from each version's `.info` file for 24 hours. The cache holds at most 100000 module versions. It is separate from the metadata cache, so a module with thousands of versions neither overflows it nor pushes out other ecosystems' documents. A `.info` file that upstream does not have is not cached, so the next request tries again.
 - The Go adapter caches the path that each module's newest `go.mod` declares, by module and version, for 24 hours. The cache holds at most 10000 module versions. A `.mod` file that upstream does not have is not cached. See [How Go module paths are matched](advisories.md#how-go-module-paths-are-matched).
 - The OpenSSF dataset, when `-openssf` is set, lives in an in-memory index that a background task rebuilds every `-openssf-refresh` (default 6 hours). After a failed rebuild, the task retries sooner, starting at 30 seconds.
+- The Go first-seen times, when `-go-index` is set, live in an in-memory set of the module versions that `proxy.golang.org` first served within `-cooldown`. A background task fills it from the Go module index at startup and reads new entries every 30 seconds. See [Go: measure from the first-seen time](cooldown.md#go-measure-from-the-first-seen-time).
 
 pkgwarden never caches artifacts. It does not cache the assessment either. It recomputes the assessment from the cached inputs on every request, so a release leaves its cooldown the moment it reaches the age, without waiting for a cache to expire.
 

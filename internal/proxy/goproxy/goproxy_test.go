@@ -142,9 +142,15 @@ func infoJSON(v string, t time.Time) string {
 
 func zipBytes(path string) []byte { return []byte("PK\x03\x04 module zip " + path) }
 
-func fakeProxy(t *testing.T, requests, infoHits *atomic.Int64) *httptest.Server {
+func fakeProxy(t *testing.T, requests, infoHits *atomic.Int64, feed *fakeIndex) *httptest.Server {
 	t.Helper()
 	versionEscapes := strings.NewReplacer("!r!c", "RC")
+	served := func(esc, v string) {
+		if feed != nil {
+			mod, _ := module.UnescapePath(esc)
+			feed.served(mod, v)
+		}
+	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
 		p := strings.TrimPrefix(r.URL.Path, "/")
@@ -158,6 +164,7 @@ func fakeProxy(t *testing.T, requests, infoHits *atomic.Int64) *httptest.Server 
 				notFound()
 				return
 			}
+			served(esc, m.latest)
 			w.Write([]byte(infoJSON(m.latest, m.times[m.latest])))
 			return
 		}
@@ -197,6 +204,7 @@ func fakeProxy(t *testing.T, requests, infoHits *atomic.Int64) *httptest.Server 
 				w.WriteHeader(status)
 				return
 			}
+			served(esc, v)
 		}
 		if status, ok := m.modStatus[v]; ok && file[dot:] == ".mod" {
 			w.WriteHeader(status)
@@ -219,24 +227,39 @@ func fakeProxy(t *testing.T, requests, infoHits *atomic.Int64) *httptest.Server 
 }
 
 type env struct {
-	proxy    *httptest.Server
-	reg      *goproxy.Registry
-	requests *atomic.Int64
-	infoHits *atomic.Int64
+	proxy     *httptest.Server
+	reg       *goproxy.Registry
+	index     *goproxy.Index
+	stopIndex func()
+	requests  *atomic.Int64
+	infoHits  *atomic.Int64
 }
+
+const cooldown = 7 * 24 * time.Hour
 
 func newEnv(t *testing.T, src fakeSource) env {
 	t.Helper()
-	engine := policy.New(policy.Config{Cooldown: 7 * 24 * time.Hour}, src)
+	return setupEnv(t, src, nil)
+}
+
+func setupEnv(t *testing.T, src fakeSource, feed *fakeIndex) env {
+	t.Helper()
+	engine := policy.New(policy.Config{Cooldown: cooldown}, src)
 	requests, infoHits := new(atomic.Int64), new(atomic.Int64)
-	reg := goproxy.New(goproxy.Options{
-		Upstream: fakeProxy(t, requests, infoHits).URL,
+	o := goproxy.Options{
+		Upstream: fakeProxy(t, requests, infoHits, feed).URL,
 		Engine:   engine,
 		HTTP:     proxy.NewUpstream(http.DefaultClient, "pkgwarden-test", time.Minute, 64<<20),
-	})
+	}
+	if feed != nil {
+		srv := httptest.NewServer(feed)
+		t.Cleanup(srv.Close)
+		o.Index = goproxy.NewIndex(o.HTTP, srv.URL, cooldown)
+	}
+	reg := goproxy.New(o)
 	srv := httptest.NewServer(proxy.NewServer(engine, reg))
 	t.Cleanup(srv.Close)
-	return env{proxy: srv, reg: reg, requests: requests, infoHits: infoHits}
+	return env{proxy: srv, reg: reg, index: o.Index, requests: requests, infoHits: infoHits}
 }
 
 func get(t *testing.T, url string) (int, string) {

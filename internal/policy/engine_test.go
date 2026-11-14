@@ -156,6 +156,36 @@ func TestCooldownJudgesEachFile(t *testing.T) {
 	}
 }
 
+func TestCooldownCountsFromTheLaterOfPublishedAndFirstSeen(t *testing.T) {
+	e := newTestEngine(Config{Cooldown: 7 * 24 * time.Hour}, nil)
+	seen := daysAgo(2).Add(-4*time.Hour - 3*time.Second)
+	a := e.Assess(context.Background(), &Package{
+		Ecosystem: ecosystem.Go, Name: "example.com/m",
+		Releases: []Release{
+			{Version: "v1.0.0", Published: daysAgo(30), FirstSeen: seen},
+			{Version: "v1.1.0", Published: daysAgo(30), FirstSeen: daysAgo(20)},
+			{Version: "v1.2.0", Published: daysAgo(3), FirstSeen: daysAgo(40)},
+			{Version: "v1.3.0", FirstSeen: daysAgo(40)},
+			{Version: "v1.4.0", Published: daysAgo(30), FirstSeen: seen, Files: []File{{"old", daysAgo(30)}}},
+			{Version: "v1.5.0", Published: daysAgo(30), FirstSeen: daysAgo(20), Files: []File{{"old", daysAgo(30)}, {"new", daysAgo(2)}}},
+		},
+	})
+	v := assertDecision(t, a, "v1.0.0", Block)
+	if want := "cooldown: first seen upstream 2d4h ago (" + seen.Format(time.RFC3339) + "), inside the 7d cooldown"; shownText(v) != want {
+		t.Errorf("reasons %q, want %q", shownText(v), want)
+	}
+	assertDecision(t, a, "v1.1.0", Allow)
+	assertMentions(t, assertDecision(t, a, "v1.2.0", Block), "cooldown: published 3d ago, inside the 7d cooldown")
+	assertMentions(t, assertDecision(t, a, "v1.3.0", Block), "cooldown: publish time unknown")
+	if v := a.File("v1.4.0", "old"); v.Decision != Block || !strings.Contains(shownText(v), "first seen upstream") {
+		t.Errorf("old file of a release first seen inside the cooldown: %s %q, want the release's block", v.Decision, shownText(v))
+	}
+	assertDecision(t, a, "v1.5.0", Warn)
+	if v := a.File("v1.5.0", "new"); v.Decision != Block || shownText(v) != "cooldown: new: published 2d ago, inside the 7d cooldown" {
+		t.Errorf("young file of a release first seen long ago: %s %q, want a block by its own upload", v.Decision, shownText(v))
+	}
+}
+
 func TestAdvisories(t *testing.T) {
 	releases := []Release{
 		{Version: "1.0.0", Published: daysAgo(400)},
