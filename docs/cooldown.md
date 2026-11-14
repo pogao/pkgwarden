@@ -100,20 +100,22 @@ After the first read, pkgwarden sends one small request every 30 seconds, plus a
 
 The wait in step 4 applies to every `.info` file pkgwarden fetches, not only to new versions. So the first request for a module, and for any version whose `.info` time pkgwarden has not cached in the last 24 hours, takes a few seconds longer than without the flag.
 
+A whole build pays that wait for most of its modules, because `go` fetches only a few modules at a time. On 2026-11-14, with `-cooldown 24h`, each test started a fresh pkgwarden and an empty Go module cache, in three rounds that alternated which side went first. `go mod download` of the 188 modules that `github.com/prometheus/prometheus` v0.54.1 requires took 107 to 122 seconds with the flag and 36 to 39 seconds without it. A `go build` with 5 direct dependencies, 59 modules in all, took 13 to 17 seconds with the flag and 6 to 7 seconds without it. Repeating the download on the same pkgwarden, with the `.info` times already cached, took 26 to 35 seconds with the flag and 27 to 28 seconds without it.
+
 ### When the index cannot answer
 
-The index never makes a Go install fail, and it delays a request by at most 10 seconds. In these cases pkgwarden judges the release by its `.info` time alone, as without the flag:
+The index never makes a Go install fail, and it delays a request by at most 10 seconds. In these cases pkgwarden stops waiting for the feed. It still uses the first-seen time of every release whose entry it has read, and it judges the other releases by their `.info` time alone, as without the flag:
 
 - Until the first read reaches the end of the feed.
-- While the last read of the feed failed. A read tries a failed request once more before it fails. pkgwarden then logs `go index sync failed` and reads again 30 seconds later.
+- While the last read of the feed failed. A read tries a failed request once more before it fails. pkgwarden then logs `go index sync failed`. If a request asked for a read while the failed read ran, the next read starts 1 second after the failure. Otherwise it starts 30 seconds after the failure. Requests that arrive after the failure do not ask for a read.
 - When the newest entry read is still not a second past the `.info` fetch after 10 seconds. In a 12-minute watch of the feed on 2026-11-14, the newest entry was 2.7 seconds old at the median and more than 9 seconds old in 22 of 240 reads, with a maximum of 24 seconds. So some first fetches end up in this case.
 - While pkgwarden shuts down.
 
-Until the first read finishes, pkgwarden logs `go index behind, judging by commit time` at debug level. In the other three cases it logs that message at warning level with the module, and it counts the request in `pkgwarden_go_index_fallbacks_total`. `pkgwarden_go_index_newest_entry_timestamp_seconds` stays `0` until the first read finishes. See [Metrics and request tracing](observability.md).
+Until the first read finishes, pkgwarden logs `go index behind, judging by commit time` at debug level. In the other three cases it logs that message at warning level with the module, and it counts the request in `pkgwarden_go_index_fallbacks_total`. The message and the count mean that the feed was not read past the fetch, not that every release of the module was judged by commit time. A release whose entry pkgwarden read earlier still gets its first-seen time. On 2026-11-14, one request logged the warning and then got 403 `first seen upstream 0s ago`. `pkgwarden_go_index_newest_entry_timestamp_seconds` stays `0` until the first read finishes. See [Metrics and request tracing](observability.md).
 
 ### What remains
 
-- In the cases above, a new tag on an old commit passes the cooldown at once, as it does without the flag. A version first fetched while the feed lags is judged by its commit time until the feed catches up. The next request for the module after that finds its entry and blocks it, but the file served before is already out.
+- In the cases above, a new tag on an old commit whose entry pkgwarden has not read passes the cooldown at once, as it does without the flag. A version first fetched while the feed lags is judged by its commit time until the feed catches up. The next request for the module after that finds its entry and blocks it, but the file served before is already out.
 - An old version that the proxy serves for the first time waits out the cooldown like a new release. This happens to an old commit fetched by its hash, a tag in a fork, and a module path spelled with different capitalization.
 - The [heuristics](heuristics.md) still use the `.info` time.
 - With `-cooldown 0`, `-go-index` reads nothing.
