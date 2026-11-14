@@ -28,7 +28,7 @@ type traits struct {
 var pep503 = regexp.MustCompile(`[-_.]+`)
 
 var table = map[Ecosystem]traits{
-	Npm:      {osv: "npm", ghsa: "npm", normalize: strings.ToLower},
+	Npm:      {osv: "npm", ghsa: "npm", normalize: func(s string) string { return s }},
 	PyPI:     {osv: "PyPI", ghsa: "pip", normalize: func(s string) string { return pep503.ReplaceAllString(strings.ToLower(s), "-") }},
 	RubyGems: {osv: "RubyGems", ghsa: "rubygems", normalize: func(s string) string { return s }},
 	Go:       {osv: "Go", ghsa: "go", normalize: func(s string) string { return s }},

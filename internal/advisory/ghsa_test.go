@@ -124,6 +124,19 @@ func TestGHSAVulnerableVersionRange(t *testing.T) {
 	}
 }
 
+func TestGHSAMatchesNpmNamesExactly(t *testing.T) {
+	src := ghsaServer(t, "", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`[{"ghsa_id":"GHSA-case-0000-0000","type":"reviewed","severity":"high","withdrawn_at":null,
+		 "vulnerabilities":[{"package":{"ecosystem":"npm","name":"jQuery"},"vulnerable_version_range":"= 1.0.0"},
+		 {"package":{"ecosystem":"npm","name":"jquery"},"vulnerable_version_range":"= 3.4.1"}]}]`))
+	})
+	advs, err := src.Lookup(context.Background(), ecosystem.Npm, "jQuery")
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkAffects(t, byID(t, advs, "GHSA-case-0000-0000"), []string{"1.0.0"}, []string{"3.4.1"})
+}
+
 func TestGHSAKindsAndWithdrawn(t *testing.T) {
 	src := ghsaServer(t, "", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`[

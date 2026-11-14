@@ -101,6 +101,17 @@ func TestPopularNamesAreNotTyposquats(t *testing.T) {
 	}
 }
 
+// npm no longer accepts new names with capital letters, so a case variant of
+// a listed name is a legacy package, not a typosquat.
+func TestNpmCaseVariantsOfPopularNamesAreNotTyposquats(t *testing.T) {
+	for _, name := range readPopular(t, ecosystem.Npm) {
+		upper := strings.ToUpper(name)
+		if reason, flagged := typosquatFinding(ecosystem.Npm, upper); flagged {
+			t.Errorf("case variant %q flagged: %s", upper, reason)
+		}
+	}
+}
+
 func readPopular(t *testing.T, eco ecosystem.Ecosystem) []string {
 	t.Helper()
 	f, err := os.Open("popular/" + string(eco) + ".txt")

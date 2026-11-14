@@ -68,6 +68,22 @@ func TestCachedServesWithinTTL(t *testing.T) {
 	})
 }
 
+// npm names are case-sensitive: jQuery and jquery are different packages.
+func TestCachedKeepsNpmCaseVariantsApart(t *testing.T) {
+	for _, order := range [][]string{{"jQuery", "jquery"}, {"jquery", "jQuery"}} {
+		c := Cached(&countingSource{}, time.Hour)
+		for _, name := range order {
+			advs, err := c.Lookup(context.Background(), ecosystem.Npm, name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(advs) != 1 || advs[0].ID != "ADV-"+name {
+				t.Errorf("after %v: Lookup(%s) = %+v, want ADV-%s", order, name, advs, name)
+			}
+		}
+	}
+}
+
 func TestCachedDoesNotCacheErrors(t *testing.T) {
 	src := &countingSource{err: errors.New("unavailable")}
 	c := Cached(src, time.Hour)
