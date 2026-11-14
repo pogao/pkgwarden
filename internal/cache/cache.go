@@ -65,15 +65,21 @@ func (c *TTL[K, V]) Set(key K, value V) {
 		c.delete(k)
 	}
 	e := &entry[V]{value: value, weight: w, expires: time.Now().Add(c.ttl)}
-	e.timer = time.AfterFunc(c.ttl, func() {
-		c.mu.Lock()
-		defer c.mu.Unlock()
-		if c.items[key] == e {
-			c.delete(key)
-		}
-	})
+	// The timer must not reach e. Go removes a stopped timer from its heap
+	// lazily, so a timer holding e would keep an evicted value in memory.
+	e.timer = time.AfterFunc(c.ttl, func() { c.expire(key) })
 	c.items[key] = e
 	c.used += w
+}
+
+// expire deletes the entry under key if it has expired. A timer that fired
+// just as its entry was replaced finds the new entry live and keeps it.
+func (c *TTL[K, V]) expire(key K) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if e, ok := c.items[key]; ok && !time.Now().Before(e.expires) {
+		c.delete(key)
+	}
 }
 
 func (c *TTL[K, V]) delete(key K) {
