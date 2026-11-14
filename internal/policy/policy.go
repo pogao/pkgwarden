@@ -25,14 +25,26 @@ type Package struct {
 // Release is one published version of a Package.
 type Release struct {
 	Version string
-	// Published is the upload time; zero when unknown.
+	// Published is the upload time, the earliest one when the release has
+	// several files; zero when unknown.
 	Published time.Time
+	// Files lists the release's files for registries that accept new files
+	// for an existing version, each at its own time. Nil means the release
+	// is one file uploaded at Published.
+	Files []File
 	// Publishers are the accounts that published or maintain this release;
 	// nil when the registry does not say.
 	Publishers []string
 	// InstallScripts reports whether installing runs package code (npm
 	// preinstall, install and postinstall scripts).
 	InstallScripts bool
+}
+
+// File is one uploaded file of a Release.
+type File struct {
+	Name string
+	// Published is the upload time of this file; zero when unknown.
+	Published time.Time
 }
 
 // Decision is the outcome for a release. Values are ordered by severity so
@@ -108,7 +120,12 @@ type Assessment struct {
 	// Package carries findings that apply to every release.
 	Package  Verdict
 	releases map[string]Verdict
+	// heldBack blocks each file still inside the cooldown in a release
+	// that is past it.
+	heldBack map[fileKey]Finding
 }
+
+type fileKey struct{ version, name string }
 
 // Release returns the verdict for version, including package-wide findings.
 // A version the registry did not report is blocked.
@@ -119,6 +136,17 @@ func (a *Assessment) Release(version string) Verdict {
 		rv.add(Finding{Rule: RuleUnknownRelease, Decision: Block, Reason: "version " + version + " is not published upstream"})
 	}
 	return a.Package.merge(rv)
+}
+
+// File returns the verdict for the file name of version: the release
+// verdict, plus a block when that file is still inside the cooldown. A name
+// the release does not list gets the release verdict.
+func (a *Assessment) File(version, name string) Verdict {
+	v := a.Release(version)
+	if f, ok := a.heldBack[fileKey{version, name}]; ok {
+		v.add(f)
+	}
+	return v
 }
 
 // Allowed reports whether version may be served.

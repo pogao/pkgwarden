@@ -113,6 +113,49 @@ func TestCooldown(t *testing.T) {
 	}
 }
 
+func TestCooldownJudgesEachFile(t *testing.T) {
+	pkg := &Package{
+		Ecosystem: ecosystem.PyPI, Name: "demo",
+		Releases: []Release{
+			{Version: "0.9", Published: daysAgo(60), Files: []File{{"demo-0.9.tar.gz", daysAgo(60)}, {"demo-0.9-py3-none-any.whl", daysAgo(40)}}},
+			{Version: "1.0", Published: daysAgo(30), Files: []File{{"demo-1.0.tar.gz", daysAgo(30)}, {"demo-1.0-py3-none-any.whl", daysAgo(2)}, {"demo-1.0-cp313-cp313-win_amd64.whl", time.Time{}}}},
+			{Version: "1.1", Published: daysAgo(3), Files: []File{{"demo-1.1.tar.gz", daysAgo(3)}, {"demo-1.1-py3-none-any.whl", daysAgo(1)}}},
+		},
+	}
+	a := newTestEngine(Config{Cooldown: 7 * 24 * time.Hour}, nil).Assess(context.Background(), pkg)
+
+	if v := a.Release("0.9"); v.Decision != Allow || len(v.Findings) != 0 {
+		t.Errorf("0.9 with every file old: %+v, want allow with no findings", v)
+	}
+	if v := a.File("0.9", "demo-0.9-py3-none-any.whl"); v.Decision != Allow {
+		t.Errorf("old file of 0.9: %+v, want allow", v)
+	}
+
+	wheel := "demo-1.0-py3-none-any.whl: published 2d ago, inside the 7d cooldown"
+	undated := "demo-1.0-cp313-cp313-win_amd64.whl: publish time unknown, so the cooldown cannot be verified"
+	release := assertDecision(t, a, "1.0", Warn)
+	assertMentions(t, release, "cooldown: "+wheel, "cooldown: "+undated)
+	if v := a.File("1.0", "demo-1.0.tar.gz"); v.Decision != Warn || shownText(v) != shownText(release) {
+		t.Errorf("old sdist of 1.0: %s %q, want the release's warnings", v.Decision, shownText(v))
+	}
+	if v := a.File("1.0", "demo-1.0-py3-none-any.whl"); v.Decision != Block || shownText(v) != "cooldown: "+wheel {
+		t.Errorf("young wheel of 1.0: %s %q, want a block naming it", v.Decision, shownText(v))
+	}
+	if v := a.File("1.0", "demo-1.0-cp313-cp313-win_amd64.whl"); v.Decision != Block || shownText(v) != "cooldown: "+undated {
+		t.Errorf("undated wheel of 1.0: %s %q, want a block naming it", v.Decision, shownText(v))
+	}
+
+	young := "cooldown: published 3d ago, inside the 7d cooldown"
+	if v := a.File("1.1", "demo-1.1-py3-none-any.whl"); v.Decision != Block || shownText(v) != young {
+		t.Errorf("file of a release inside the cooldown: %s %q, want only the release's block %q", v.Decision, shownText(v), young)
+	}
+
+	off := newTestEngine(Config{}, nil).Assess(context.Background(), pkg)
+	if v := off.File("1.0", "demo-1.0-cp313-cp313-win_amd64.whl"); v.Decision != Allow {
+		t.Errorf("cooldown off: %+v, want allow", v)
+	}
+}
+
 func TestAdvisories(t *testing.T) {
 	releases := []Release{
 		{Version: "1.0.0", Published: daysAgo(400)},
@@ -254,9 +297,15 @@ func TestAllowlistBypassesEveryCheck(t *testing.T) {
 	src := fakeSource{advs: []advisory.Advisory{{ID: "MAL-2026-5", Kind: advisory.Malicious}}}
 	a := newTestEngine(cfg, src).Assess(context.Background(), &Package{
 		Ecosystem: ecosystem.PyPI, Name: "Internal.Tool", WeeklyDownloads: 0,
-		Releases: []Release{{Version: "1.0", Published: daysAgo(1)}},
+		Releases: []Release{
+			{Version: "1.0", Published: daysAgo(1)},
+			{Version: "0.9", Published: daysAgo(90), Files: []File{{"internal_tool-0.9.tar.gz", daysAgo(90)}, {"internal_tool-0.9-py3-none-any.whl", daysAgo(1)}}},
+		},
 	})
 	assertDecision(t, a, "1.0", Allow)
+	if v := a.File("0.9", "internal_tool-0.9-py3-none-any.whl"); v.Decision != Allow {
+		t.Errorf("young file of an allowlisted package: %+v, want allow", v)
+	}
 }
 
 func TestUnknownReleaseIsBlocked(t *testing.T) {

@@ -94,6 +94,17 @@ type versionEntry struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// head is how a compact index line names the entry: VERSION, or
+// VERSION-PLATFORM for a platform other than ruby.
+func (e versionEntry) head() string {
+	if e.Platform == "ruby" {
+		return e.Number
+	}
+	return e.Number + "-" + e.Platform
+}
+
+func (e versionEntry) file(gem string) string { return gem + "-" + e.head() + ".gem" }
+
 // versions lists every uploaded file of name, one entry per version and
 // platform.
 func (r *Registry) versions(ctx context.Context, name string) ([]versionEntry, error) {
@@ -110,6 +121,13 @@ func (r *Registry) versions(ctx context.Context, name string) ([]versionEntry, e
 // Package describes name from the versions and gem APIs. RubyGems names no
 // pusher per release in these endpoints, so Publishers stays nil.
 func (r *Registry) Package(ctx context.Context, name string) (*policy.Package, error) {
+	_, pkg, err := r.load(ctx, name)
+	return pkg, err
+}
+
+// load fetches every uploaded file of name and describes the package for
+// the policy engine, with one release per version and one file per platform.
+func (r *Registry) load(ctx context.Context, name string) ([]versionEntry, *policy.Package, error) {
 	var entries []versionEntry
 	var gem struct {
 		Downloads int64 `json:"downloads"`
@@ -127,7 +145,7 @@ func (r *Registry) Package(ctx context.Context, name string) (*policy.Package, e
 		return nil
 	})
 	if err := g.Wait(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	pkg := &policy.Package{Ecosystem: ecosystem.RubyGems, Name: name, WeeklyDownloads: policy.UnknownDownloads}
@@ -136,33 +154,38 @@ func (r *Registry) Package(ctx context.Context, name string) (*policy.Package, e
 		if pkg.Created.IsZero() || e.CreatedAt.Before(pkg.Created) {
 			pkg.Created = e.CreatedAt
 		}
+		file := policy.File{Name: e.file(name), Published: e.CreatedAt}
 		i, seen := index[e.Number]
 		if !seen {
 			index[e.Number] = len(pkg.Releases)
-			pkg.Releases = append(pkg.Releases, policy.Release{Version: e.Number, Published: e.CreatedAt})
+			pkg.Releases = append(pkg.Releases, policy.Release{Version: e.Number, Published: e.CreatedAt, Files: []policy.File{file}})
 			continue
 		}
-		if e.CreatedAt.Before(pkg.Releases[i].Published) {
-			pkg.Releases[i].Published = e.CreatedAt
+		rel := &pkg.Releases[i]
+		rel.Files = append(rel.Files, file)
+		if e.CreatedAt.Before(rel.Published) {
+			rel.Published = e.CreatedAt
 		}
 	}
 	if downloadsErr == nil {
 		weeks := int64(time.Since(pkg.Created) / (7 * 24 * time.Hour))
 		pkg.WeeklyDownloads = gem.Downloads / max(1, weeks)
 	}
-	return pkg, nil
+	return entries, pkg, nil
 }
 
 // serveInfo answers /info/<gem> with the upstream file minus the lines of
-// blocked versions. The body no longer matches upstream, so upstream's ETag
-// and digests are replaced with ones computed over the filtered body, and a
-// Range request gets the whole file. When the package itself is blocked,
-// every version line goes and the client sees a gem with no versions, rather
-// than a 403 that makes Bundler abandon the compact index for the whole
-// source and resolve from the unfiltered full index.
+// blocked versions and of platform gems still inside the cooldown. The body
+// no longer matches upstream, so upstream's ETag and digests are replaced
+// with ones computed over the filtered body, and a Range request gets the
+// whole file. When the package itself is blocked, every version line goes
+// and the client sees a gem with no versions, rather than a 403 that makes
+// Bundler abandon the compact index for the whole source and resolve from
+// the unfiltered full index.
 func (r *Registry) serveInfo(w http.ResponseWriter, req *http.Request) {
 	name := req.PathValue("name")
 	var body []byte
+	var entries []versionEntry
 	var pkg *policy.Package
 	g, gctx := errgroup.WithContext(req.Context())
 	g.Go(func() (err error) {
@@ -170,7 +193,7 @@ func (r *Registry) serveInfo(w http.ResponseWriter, req *http.Request) {
 		return err
 	})
 	g.Go(func() (err error) {
-		pkg, err = r.Package(gctx, name)
+		entries, pkg, err = r.load(gctx, name)
 		return err
 	})
 	if err := g.Wait(); err != nil {
@@ -187,13 +210,17 @@ func (r *Registry) serveInfo(w http.ResponseWriter, req *http.Request) {
 	} else {
 		proxy.Enforce(ctx, w, proxy.Text, proxy.StageMetadata, s, a.Package)
 	}
-	writeInfo(w, req, filterInfo(body, a.Allowed))
+	allowed := make(map[string]bool, len(entries))
+	for _, e := range entries {
+		allowed[e.head()] = a.File(e.Number, e.file(name)).Decision != policy.Block
+	}
+	writeInfo(w, req, filterInfo(body, allowed))
 }
 
-// filterInfo keeps the "---" header and every line whose version is
-// allowed, byte for byte. A line reads "VERSION[-PLATFORM] DEPS|REQS";
-// anything without a recognisable allowed version is dropped.
-func filterInfo(body []byte, allowed func(version string) bool) []byte {
+// filterInfo keeps the "---" header and every line whose head is allowed,
+// byte for byte. A line reads "VERSION[-PLATFORM] DEPS|REQS"; a line whose
+// head names no uploaded file is dropped.
+func filterInfo(body []byte, allowed map[string]bool) []byte {
 	var out bytes.Buffer
 	for line := range bytes.Lines(body) {
 		text := bytes.TrimSuffix(line, []byte("\n"))
@@ -202,8 +229,7 @@ func filterInfo(body []byte, allowed func(version string) bool) []byte {
 			continue
 		}
 		head, _, _ := bytes.Cut(text, []byte(" "))
-		version, _, _ := bytes.Cut(head, []byte("-"))
-		if allowed(string(version)) {
+		if allowed[string(head)] {
 			out.Write(line)
 		}
 	}
@@ -248,13 +274,13 @@ func (r *Registry) serveArtifact(suffix string, packageFile bool) http.HandlerFu
 			r.relay(w, req, target)
 			return
 		}
-		pkg, version, err := r.resolve(ctx, base)
+		pkg, entry, err := r.resolve(ctx, base)
 		if err != nil {
 			proxy.WriteError(w, err)
 			return
 		}
-		s := proxy.Subject{Ecosystem: ecosystem.RubyGems, Name: pkg.Name, Version: version}
-		v := r.engine.Assess(ctx, pkg).Release(version)
+		s := proxy.Subject{Ecosystem: ecosystem.RubyGems, Name: pkg.Name, Version: entry.Number}
+		v := r.engine.Assess(ctx, pkg).File(entry.Number, entry.file(pkg.Name))
 		if !proxy.Enforce(ctx, w, proxy.Text, proxy.StageArtifact, s, v) {
 			return
 		}
@@ -272,26 +298,26 @@ func (r *Registry) serveArtifact(suffix string, packageFile bool) http.HandlerFu
 	}
 }
 
-// resolve finds the package and version a file name refers to. Names may
-// contain "-" followed by digits, so a name like foo-1-java-2.0 reads as
-// several splits. Only a split matching an uploaded version and platform
-// exactly counts: judging foo-1-java-2.0.gem as foo 1 would let a young
-// gem named foo-1-java ride on an old release of foo.
-func (r *Registry) resolve(ctx context.Context, base string) (*policy.Package, string, error) {
+// resolve finds the package and the uploaded file a file name refers to.
+// Names may contain "-" followed by digits, so a name like foo-1-java-2.0
+// reads as several splits. Only a split matching an uploaded version and
+// platform exactly counts: judging foo-1-java-2.0.gem as foo 1 would let a
+// young gem named foo-1-java ride on an old release of foo.
+func (r *Registry) resolve(ctx context.Context, base string) (*policy.Package, versionEntry, error) {
 	for _, c := range parseFileName(base) {
 		entries, err := r.versions(ctx, c.name)
 		if errors.Is(err, proxy.ErrNotFound) {
 			continue
 		}
 		if err != nil {
-			return nil, "", err
+			return nil, versionEntry{}, err
 		}
-		if slices.ContainsFunc(entries, func(e versionEntry) bool { return e.Number == c.version && e.Platform == c.platform }) {
+		if i := slices.IndexFunc(entries, func(e versionEntry) bool { return e.Number == c.version && e.Platform == c.platform }); i >= 0 {
 			pkg, err := r.Package(ctx, c.name)
-			return pkg, c.version, err
+			return pkg, entries[i], err
 		}
 	}
-	return nil, "", fmt.Errorf("rubygems file %s matches no uploaded release: %w", base, proxy.ErrNotFound)
+	return nil, versionEntry{}, fmt.Errorf("rubygems file %s matches no uploaded release: %w", base, proxy.ErrNotFound)
 }
 
 type fileName struct {

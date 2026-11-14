@@ -48,6 +48,8 @@ Without `version`, the response holds only findings that apply to every release.
 
 With `version`, the response merges the package findings with the release's own findings. A version that upstream does not report gets an `unknown-release` block.
 
+A PyPI release or a RubyGems version can be past the cooldown while one of its files is not, such as a wheel or a platform gem added later. The response then reports `warn`, with one `cooldown` finding at `warn` for each such file. Each reason starts with the file name, as in `demo_pkg-1.0.1-py3-none-any.whl: published 2d ago, inside the 7d cooldown`. pkgwarden serves the other files of the release and answers 403 for the named ones. See [Files added to an old release](cooldown.md#files-added-to-an-old-release).
+
 For Go, a canonical version that the version list leaves out, such as a pseudo-version, is assessed from its `.info` file, as a `.zip` download is. A version that is not canonical, such as `v1.6`, gets `unknown-release`.
 
 This response was captured on 2026-11-07:
@@ -106,7 +108,7 @@ These are the `Rule` constants in `internal/policy/policy.go`. There are 12. To 
 | Rule | Decisions | Applies to | Meaning |
 | --- | --- | --- | --- |
 | `allowlist` | `allow` | Package | The package is on `-allow`. No other check ran. |
-| `cooldown` | `block` | Release | The release is younger than `-cooldown`, or its publish time is unknown. See [Cooldown](cooldown.md). |
+| `cooldown` | `block`, `warn` | Release, or one file of a PyPI or RubyGems release | The release is younger than `-cooldown`, or its publish time is unknown. A file younger than `-cooldown` in an older release is blocked, and the release warns. See [Cooldown](cooldown.md). |
 | `advisory/malicious` | `block` | Release, or package for a package-wide advisory | An advisory reports the release as malicious. See [Advisories](advisories.md). |
 | `advisory/vulnerability` | `warn`, `block` | Release, or package for a package-wide advisory | A vulnerability advisory covers the release. It blocks at `-block-severity` or above. See [The severity threshold](advisories.md#the-severity-threshold). |
 | `advisory-lookup` | `warn`, `block` | Package | An advisory source failed. `block` by default, `warn` with `-fail-open`. |
@@ -132,7 +134,7 @@ Returns every metric in the Prometheus exposition format. It answers `GET` and `
 
 Every response carries `X-Request-Id`, the ID of the request. pkgwarden keeps an `X-Request-Id` sent with the request when it is 1 to 64 characters, each a letter, a digit, `.`, `_`, or `-`. Otherwise it generates 32 lowercase hexadecimal digits. Every log line about the request carries the same ID as `request_id`. See [Follow one request through the logs](observability.md#follow-one-request-through-the-logs).
 
-pkgwarden adds these headers to every response that went through the policy. Those are the metadata documents and the files listed in [Ecosystem routes](#ecosystem-routes) as filtered or enforced. Responses that pkgwarden passes through unchanged carry neither header.
+pkgwarden adds these headers to every response that went through the policy. Those are the metadata documents and the files listed in [Ecosystem routes](#ecosystem-routes) as filtered or enforced. Responses that pkgwarden passes through unchanged carry neither header. On a PyPI or RubyGems file that the cooldown holds back, the decision is `block` even when the release verdict is `warn`.
 
 | Header | Value |
 | --- | --- |

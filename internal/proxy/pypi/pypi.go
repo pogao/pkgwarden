@@ -148,6 +148,7 @@ func (p *project) describe(weeklyDownloads int64) *policy.Package {
 	for v, fs := range p.releases {
 		rel := policy.Release{Version: v}
 		for _, f := range fs {
+			rel.Files = append(rel.Files, policy.File{Name: f.Filename, Published: f.UploadTime})
 			if !f.UploadTime.IsZero() && (rel.Published.IsZero() || f.UploadTime.Before(rel.Published)) {
 				rel.Published = f.UploadTime
 			}
@@ -210,6 +211,9 @@ func (r *Registry) simple(w http.ResponseWriter, req *http.Request) {
 		}
 		page.versions = append(page.versions, rel.Version)
 		for _, f := range p.releases[rel.Version] {
+			if a.File(rel.Version, f.Filename).Decision == policy.Block {
+				continue
+			}
 			href := r.base(req) + "/pypi/files/" + url.PathEscape(name) + "/" + url.PathEscape(rel.Version) + "/" + url.PathEscape(f.Filename)
 			page.links = append(page.links, link{file: f, href: href})
 		}
@@ -236,14 +240,18 @@ func (r *Registry) file(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	s := proxy.Subject{Ecosystem: ecosystem.PyPI, Name: p.name, Version: version}
+	f, metadata, ok := p.source(version, filename)
 	a := r.o.Engine.Assess(ctx, pkg)
-	if !proxy.Enforce(ctx, w, proxy.Text, proxy.StageArtifact, s, a.Release(version)) {
+	if !proxy.Enforce(ctx, w, proxy.Text, proxy.StageArtifact, s, a.File(version, f.Filename)) {
 		return
 	}
-	src, metadata, ok := p.source(version, filename)
 	if !ok {
 		http.NotFound(w, req)
 		return
+	}
+	src := f.URL
+	if metadata {
+		src += ".metadata"
 	}
 	if !strings.HasPrefix(src, r.o.Files+"/") {
 		proxy.WriteError(w, fmt.Errorf("%s: file URL %s is not under %s", filename, src, r.o.Files))
@@ -261,18 +269,18 @@ func (r *Registry) file(w http.ResponseWriter, req *http.Request) {
 	proxy.ServeArtifact(w, req, s, resp)
 }
 
-// source returns the upstream URL of a distribution file, or of its PEP 658
-// metadata file when metadata is true.
-func (p *project) source(version, filename string) (src string, metadata, ok bool) {
+// source returns the distribution file that filename names in version:
+// the file itself, or its PEP 658 metadata file when metadata is true.
+func (p *project) source(version, filename string) (dist file, metadata, ok bool) {
 	for _, f := range p.releases[version] {
 		switch {
 		case f.Filename == filename:
-			return f.URL, false, true
+			return f, false, true
 		case f.CoreMetadata != "" && f.Filename+".metadata" == filename:
-			return f.URL + ".metadata", true, true
+			return f, true, true
 		}
 	}
-	return "", false, false
+	return file{}, false, false
 }
 
 func (r *Registry) base(req *http.Request) string { return proxy.BaseURL(req, r.o.PublicURL) }

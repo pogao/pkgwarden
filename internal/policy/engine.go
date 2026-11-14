@@ -57,7 +57,7 @@ func New(cfg Config, src advisory.Source) *Engine {
 // Assess returns the verdict for every release of pkg. Failures to reach an
 // advisory source become findings rather than errors.
 func (e *Engine) Assess(ctx context.Context, pkg *Package) *Assessment {
-	a := &Assessment{releases: make(map[string]Verdict, len(pkg.Releases))}
+	a := &Assessment{releases: make(map[string]Verdict, len(pkg.Releases)), heldBack: make(map[fileKey]Finding)}
 	for _, r := range pkg.Releases {
 		a.releases[r.Version] = Verdict{}
 	}
@@ -86,20 +86,39 @@ func (e *Engine) allowlisted(pkg *Package) bool {
 	})
 }
 
+// cooldown blocks a release whose earliest upload is too young. A release
+// past the cooldown can still hold a younger file. That file is blocked on
+// its own, and the release warns about it while its other files are served.
 func (e *Engine) cooldown(pkg *Package, a *Assessment) {
 	if e.cfg.Cooldown <= 0 {
 		return
 	}
 	now := e.now()
 	for _, r := range pkg.Releases {
-		switch age := max(now.Sub(r.Published), 0); {
-		case r.Published.IsZero():
-			a.flag(r.Version, Finding{Rule: RuleCooldown, Decision: Block, Reason: "publish time unknown, so the cooldown cannot be verified"})
-		case age < e.cfg.Cooldown:
-			a.flag(r.Version, Finding{Rule: RuleCooldown, Decision: Block, Reason: fmt.Sprintf(
-				"published %s ago, inside the %s cooldown", humanDuration(age), humanDuration(e.cfg.Cooldown))})
+		if reason, young := e.tooYoung(r.Published, now); young {
+			a.flag(r.Version, Finding{Rule: RuleCooldown, Decision: Block, Reason: reason})
+			continue
+		}
+		for _, f := range r.Files {
+			if reason, young := e.tooYoung(f.Published, now); young {
+				reason = f.Name + ": " + reason
+				a.heldBack[fileKey{r.Version, f.Name}] = Finding{Rule: RuleCooldown, Decision: Block, Reason: reason}
+				a.flag(r.Version, Finding{Rule: RuleCooldown, Decision: Warn, Reason: reason})
+			}
 		}
 	}
+}
+
+// tooYoung reports whether something published at t is inside the
+// cooldown, and why.
+func (e *Engine) tooYoung(t, now time.Time) (string, bool) {
+	switch age := max(now.Sub(t), 0); {
+	case t.IsZero():
+		return "publish time unknown, so the cooldown cannot be verified", true
+	case age < e.cfg.Cooldown:
+		return fmt.Sprintf("published %s ago, inside the %s cooldown", humanDuration(age), humanDuration(e.cfg.Cooldown)), true
+	}
+	return "", false
 }
 
 func (e *Engine) knownBad(ctx context.Context, pkg *Package, a *Assessment) {
