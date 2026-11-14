@@ -1,6 +1,7 @@
 package goproxy_test
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -49,6 +50,20 @@ type fakeModule struct {
 	times      map[string]time.Time
 	infoStatus map[string]int
 	latest     string
+	// goMod holds the module path a version's go.mod declares, when it is
+	// not the escaped request path.
+	goMod map[string]string
+}
+
+// logrus mimics github.com/sirupsen/logrus, which proxy.golang.org also
+// serves under case variants such as github.com/Sirupsen/logrus. v1.0.3
+// predates its go.mod, so upstream synthesizes one with the requested path.
+func logrus(requested string) fakeModule {
+	return fakeModule{
+		listed: []string{"v1.0.3", "v1.9.3"},
+		times:  map[string]time.Time{"v1.0.3": ancient, "v1.9.3": old},
+		goMod:  map[string]string{"v1.0.3": requested, "v1.9.3": "github.com/sirupsen/logrus"},
+	}
 }
 
 func manyVersions(n int) fakeModule {
@@ -88,7 +103,11 @@ var modules = map[string]fakeModule{
 		times:      map[string]time.Time{"v1.0.0": old, "v1.1.0": old},
 		infoStatus: map[string]int{"v1.1.0": http.StatusInternalServerError},
 	},
-	"example.com/many": manyVersions(600),
+	"example.com/many":                         manyVersions(600),
+	"github.com/sirupsen/logrus":               logrus("github.com/sirupsen/logrus"),
+	"github.com/!sirupsen/logrus":              logrus("github.com/Sirupsen/logrus"),
+	"github.com/!s!i!r!u!p!s!e!n/!l!o!g!r!u!s": logrus("github.com/SIRUPSEN/LOGRUS"),
+	"github.com/fork/logrus":                   logrus("github.com/fork/logrus"),
 }
 
 func infoJSON(v string, t time.Time) string {
@@ -158,7 +177,7 @@ func fakeProxy(t *testing.T, requests, infoHits *atomic.Int64) *httptest.Server 
 		case ".info":
 			w.Write([]byte(infoJSON(v, tm)))
 		case ".mod":
-			fmt.Fprintf(w, "module %s\n", esc)
+			fmt.Fprintf(w, "module %s\n", cmp.Or(m.goMod[v], esc))
 		case ".zip":
 			w.Header().Set("Content-Type", "application/zip")
 			w.Write(zipBytes(p))
@@ -372,6 +391,41 @@ func TestCheckAgreesWithZip(t *testing.T) {
 	for _, v := range []string{"v1.0", "master"} {
 		if d, rules := checkAPI(t, e, fooBar, v); d != "block" || !slices.Equal(rules, []string{"unknown-release"}) {
 			t.Errorf("%s check: %s %v, want block [unknown-release]", v, d, rules)
+		}
+	}
+}
+
+func TestCaseVariantGetsTheCanonicalAdvisories(t *testing.T) {
+	e := newEnv(t, fakeSource{"github.com/sirupsen/logrus": {{
+		ID: "MAL-2026-0001", Source: "osv", Kind: advisory.Malicious, Ecosystem: ecosystem.Go,
+		Ranges: []advisory.Range{{Introduced: "0", Fixed: "v1.9.3"}},
+	}}})
+	tests := []struct {
+		module, version, decision string
+		rules                     []string
+	}{
+		{"github.com/sirupsen/logrus", "v1.0.3", "block", []string{"advisory/malicious"}},
+		{"github.com/Sirupsen/logrus", "v1.0.3", "block", []string{"advisory/malicious"}},
+		{"github.com/SIRUPSEN/LOGRUS", "v1.0.3", "block", []string{"advisory/malicious"}},
+		{"github.com/Sirupsen/logrus", "v1.9.3", "allow", nil},
+		// A fork whose go.mod still declares the original path is another
+		// repository, not a spelling of the original.
+		{"github.com/fork/logrus", "v1.0.3", "allow", nil},
+	}
+	for _, tt := range tests {
+		esc, err := module.EscapePath(tt.module)
+		if err != nil {
+			t.Fatal(err)
+		}
+		status, body := get(t, e.proxy.URL+"/go/"+esc+"/@v/"+tt.version+".zip")
+		if tt.decision == "allow" && status != http.StatusOK {
+			t.Errorf("%s@%s zip: status %d body %q, want 200", tt.module, tt.version, status, body)
+		}
+		if tt.decision == "block" {
+			assertBlocked(t, status, body, "go/"+tt.module+"@"+tt.version, "MAL-2026-0001")
+		}
+		if d, rules := checkAPI(t, e, tt.module, tt.version); d != tt.decision || !slices.Equal(rules, tt.rules) {
+			t.Errorf("%s@%s check: %s %v, want %s %v", tt.module, tt.version, d, rules, tt.decision, tt.rules)
 		}
 	}
 }
