@@ -1,6 +1,6 @@
 # Develop pkgwarden
 
-This guide covers the code layout, the tests, adding an ecosystem, and refreshing the popular-package lists. You need Go 1.27.3 or later. The end-to-end script also needs Docker and network access.
+This guide covers the code layout, the tests, continuous integration, adding an ecosystem, and refreshing the popular-package lists. You need Go 1.27.3 or later. The end-to-end script also needs Docker and network access.
 
 ## Find your way around the code
 
@@ -21,6 +21,7 @@ This guide covers the code layout, the tests, adding an ecosystem, and refreshin
 	internal/proxy/cargo/   the Cargo adapter
 	scripts/e2e.sh          the end-to-end check with real clients
 	Dockerfile              the container image
+	.github/workflows/ci.yml  the unit and end-to-end tests for every pull request and push to main
 
 Each adapter translates one registry protocol to and from `policy.Package`. The engine never sees a protocol. [How pkgwarden works](how-it-works.md) explains the flow between them.
 
@@ -80,6 +81,17 @@ The script checks these behaviors:
 It prints `PASS` or `FAIL` for each check, and exits with status 1 if any check failed. The checks depend on live registry and advisory data. A new advisory for `requests` 2.31.0, for example, would fail a check without any code change.
 
 The script needs port 18080 free. It exits with status 1 before any check if it cannot create the network, start the container, or get an answer from `/healthz` within 30 seconds.
+
+## Continuous integration
+
+GitHub Actions runs `.github/workflows/ci.yml` on every pull request and on every push to `main`. Its `unit` job runs `go test -race ./...` and then `go test ./...` with the Go version from `go.mod`. The second run checks the npm memory tests' byte budgets, which those tests skip under `-race`. Its `e2e` job runs `scripts/e2e.sh` at the same time. When the `e2e` job fails, it prints `e2e-pkgwarden.log` to the job log. The workflow keeps no build output and publishes nothing.
+
+The workflow uses no secrets, and its token can only read the repository. It runs on `pull_request`, not `pull_request_target`, so a run for a pull request from a fork gets a read-only token and no secrets. A pull request runs its own version of the workflow, so review any change under `.github/workflows/` before you trust its checks.
+
+The repository's Actions settings add two limits:
+
+- A pull request from anyone who is not a collaborator waits for a maintainer to approve its runs.
+- Workflows can use only actions that GitHub or the repository's owner publishes, and each one must be pinned to a full commit SHA.
 
 ## Add an ecosystem adapter
 
