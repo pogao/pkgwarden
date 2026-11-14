@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/pogao/pkgwarden/internal/ecosystem"
 	"github.com/pogao/pkgwarden/internal/policy"
@@ -41,7 +42,30 @@ func NewServer(engine *policy.Engine, regs ...Registry) http.Handler {
 	mux.HandleFunc("GET /api/v1/check", func(w http.ResponseWriter, r *http.Request) {
 		check(w, r, engine, byEco)
 	})
-	return mux
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !canonicalPath(r.URL.Path) {
+			http.NotFound(w, r)
+			return
+		}
+		mux.ServeHTTP(w, r)
+	})
+}
+
+// canonicalPath reports whether the decoded path p has no "." or ".."
+// segment, no empty segment except a trailing slash, and no backslash.
+// Adapters route on the decoded path but relay the raw one, so an encoded
+// segment that the registry resolves would fetch a path no route checked.
+func canonicalPath(p string) bool {
+	if strings.Contains(p, `\`) {
+		return false
+	}
+	segs := strings.Split(strings.TrimPrefix(p, "/"), "/")
+	for i, s := range segs {
+		if s == "." || s == ".." || s == "" && i < len(segs)-1 {
+			return false
+		}
+	}
+	return true
 }
 
 type checkResult struct {

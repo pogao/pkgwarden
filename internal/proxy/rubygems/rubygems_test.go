@@ -323,6 +323,13 @@ func TestUnroutedPathsUnderFilteredPrefixes(t *testing.T) {
 		"/gems/nokogiri-1.15.0.gem/",
 		"/downloads/nokogiri-1.15.0.gem/",
 		"/quick/Marshal.4.8/nokogiri-1.15.0.gemspec.rz/",
+		"/x/%2e%2e/gems/nokogiri-1.16.0.gem",
+		"/x/..%2fgems/nokogiri-1.16.0.gem",
+		"/%2fgems/nokogiri-1.16.0.gem",
+		"/x%5c..%5cgems/nokogiri-1.16.0.gem",
+		"/gems/nokogiri-1.16.0.gem%3F",
+		"/downloads/nokogiri-1.16.0.gem%23",
+		"/quick/Marshal.4.8/nokogiri-1.16.0.gemspec.rz%23x",
 	} {
 		before := hits.Load()
 		resp := get(t, "GET", srv.URL+"/rubygems"+path, nil)
