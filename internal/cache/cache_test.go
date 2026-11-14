@@ -45,6 +45,39 @@ func TestZeroTTLHoldsNothing(t *testing.T) {
 	runtime.KeepAlive(c)
 }
 
+func TestEvictedEntryIsReleased(t *testing.T) {
+	// A running proxy holds many other cached entries, and their timers
+	// keep the runtime from sweeping stopped ones right away.
+	others := cache.New[int, int](time.Hour, 1000)
+	for i := range 1000 {
+		others.Set(i, i)
+	}
+	c := cache.New[int, *payload](time.Hour, 2)
+	held := make([]weak.Pointer[payload], 10)
+	for i := range held {
+		v := new(payload)
+		held[i] = weak.Make(v)
+		c.Set(i, v)
+	}
+	runtime.GC()
+
+	evicted := 0
+	for i, p := range held {
+		if _, ok := c.Get(i); ok {
+			continue
+		}
+		evicted++
+		if p.Value() != nil {
+			t.Errorf("entry %d was evicted but is still in memory", i)
+		}
+	}
+	if want := len(held) - 2; evicted != want {
+		t.Errorf("evicted %d entries, want %d", evicted, want)
+	}
+	runtime.KeepAlive(others)
+	runtime.KeepAlive(c)
+}
+
 func byValue(_ int, w int64) int64 { return w }
 
 func TestWeightsNeverSumPastTheBudget(t *testing.T) {
