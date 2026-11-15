@@ -87,7 +87,15 @@ pkgwarden keeps up to six caches in memory. None survives a restart. `pkgwarden_
 - The OpenSSF dataset, when `-openssf` is set, lives in an in-memory index that a background task rebuilds every `-openssf-refresh` (default 6 hours). After a failed rebuild, the task retries sooner, starting at 30 seconds.
 - The Go first-seen times, when `-go-index` is set, live in an in-memory set of the module versions that `proxy.golang.org` first served within `-cooldown`. A background task fills it from the Go module index at startup and reads new entries every 30 seconds. See [Go: measure from the first-seen time](cooldown.md#go-measure-from-the-first-seen-time).
 
-pkgwarden never caches artifacts. It does not cache the assessment either. It recomputes the assessment from the cached inputs on every request, so a release leaves its cooldown the moment it reaches the age, without waiting for a cache to expire.
+pkgwarden never caches artifacts, and it never caches a whole assessment. Every request runs the engine again on the cached inputs. The allowlist, the cooldown, and the typosquat, new-package, and low-downloads checks run in full on every request, so a release leaves its cooldown the moment it reaches the age, without waiting for a cache to expire.
+
+For an npm packument in the metadata cache, pkgwarden also keeps three results that do not depend on the clock. `Package.Index` holds them with the parsed packument:
+
+- The set of published versions.
+- The maintainer-change and install-scripts signals of each release.
+- The advisory findings of each release.
+
+Every request for that packument shares them until the document leaves the cache. pkgwarden computes the advisory findings again when the advisory lookup returns a different result, so they always match the cached lookup. A new advisory applies once the cached lookup for the package expires, as in every other ecosystem.
 
 The first request for a Go module with many versions is the slow case. The adapter fetches one `.info` file per listed version, eight at a time, to learn each publish time. Later requests fetch only the `.info` files missing from the cache.
 
