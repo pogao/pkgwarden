@@ -57,9 +57,11 @@ func New(cfg Config, src advisory.Source) *Engine {
 // Assess returns the verdict for every release of pkg. Failures to reach an
 // advisory source become findings rather than errors.
 func (e *Engine) Assess(ctx context.Context, pkg *Package) *Assessment {
-	a := &Assessment{releases: make(map[string]Verdict, len(pkg.Releases)), heldBack: make(map[fileKey]Finding)}
-	for _, r := range pkg.Releases {
-		a.releases[r.Version] = Verdict{}
+	a := &Assessment{
+		cooldown:  make(map[string][]Finding),
+		heuristic: make(map[string][]Finding),
+		heldBack:  make(map[fileKey]Finding),
+		index:     pkg.releaseIndex(),
 	}
 	if e.allowlisted(pkg) {
 		a.Package.add(Finding{Rule: RuleAllowlist, Decision: Allow, Reason: "package is allowlisted"})
@@ -71,12 +73,6 @@ func (e *Engine) Assess(ctx context.Context, pkg *Package) *Assessment {
 		e.heuristics(pkg, a)
 	}
 	return a
-}
-
-func (a *Assessment) flag(version string, f Finding) {
-	v := a.releases[version]
-	v.add(f)
-	a.releases[version] = v
 }
 
 func (e *Engine) allowlisted(pkg *Package) bool {
@@ -98,14 +94,14 @@ func (e *Engine) cooldown(pkg *Package, a *Assessment) {
 	now := e.now()
 	for _, r := range pkg.Releases {
 		if reason, young := e.releaseTooYoung(r, now); young {
-			a.flag(r.Version, Finding{Rule: RuleCooldown, Decision: Block, Reason: reason})
+			a.cooldown[r.Version] = append(a.cooldown[r.Version], Finding{Rule: RuleCooldown, Decision: Block, Reason: reason})
 			continue
 		}
 		for _, f := range r.Files {
 			if reason, young := e.tooYoung(f.Published, now); young {
 				reason = f.Name + ": " + reason
 				a.heldBack[fileKey{r.Version, f.Name}] = Finding{Rule: RuleCooldown, Decision: Block, Reason: reason}
-				a.flag(r.Version, Finding{Rule: RuleCooldown, Decision: Warn, Reason: reason})
+				a.cooldown[r.Version] = append(a.cooldown[r.Version], Finding{Rule: RuleCooldown, Decision: Warn, Reason: reason})
 			}
 		}
 	}
@@ -150,35 +146,52 @@ func (e *Engine) knownBad(ctx context.Context, pkg *Package, a *Assessment) {
 		}
 		a.Package.add(Finding{Rule: RuleAdvisoryLookup, Decision: d, Reason: "advisory lookup failed: " + err.Error()})
 	}
+	for _, adv := range advs {
+		if len(adv.Versions) == 0 && len(adv.Ranges) == 0 {
+			a.Package.add(e.advisoryFinding(adv))
+		}
+	}
+	a.advised = a.index.advised(e, advs)
+}
+
+func (e *Engine) advisoryFinding(adv advisory.Advisory) Finding {
+	f := Finding{Rule: RuleVulnerability, Decision: Warn, Reason: describe(adv)}
+	switch {
+	case adv.Kind == advisory.Malicious:
+		f.Rule, f.Decision = RuleMalicious, Block
+	case e.cfg.BlockSeverity > advisory.SeverityUnknown && adv.Severity >= e.cfg.BlockSeverity:
+		f.Decision = Block
+	}
+	return f
+}
+
+// matchReleases returns the findings of each release that one of advs
+// names by version or range.
+func (e *Engine) matchReleases(releases []Release, advs []advisory.Advisory) map[string][]Finding {
+	out := make(map[string][]Finding)
 	// Keyed by ecosystem because each advisory orders versions by its own.
 	parsed := make(map[ecosystem.Ecosystem][]version.Version)
 	for _, adv := range advs {
-		f := Finding{Rule: RuleVulnerability, Decision: Warn, Reason: describe(adv)}
-		switch {
-		case adv.Kind == advisory.Malicious:
-			f.Rule, f.Decision = RuleMalicious, Block
-		case e.cfg.BlockSeverity > advisory.SeverityUnknown && adv.Severity >= e.cfg.BlockSeverity:
-			f.Decision = Block
-		}
 		if len(adv.Versions) == 0 && len(adv.Ranges) == 0 {
-			a.Package.add(f)
 			continue
 		}
-		releases, ok := parsed[adv.Ecosystem]
+		f := e.advisoryFinding(adv)
+		versions, ok := parsed[adv.Ecosystem]
 		if !ok {
-			releases = make([]version.Version, len(pkg.Releases))
-			for i, r := range pkg.Releases {
-				releases[i] = version.Parse(adv.Ecosystem, r.Version)
+			versions = make([]version.Version, len(releases))
+			for i, r := range releases {
+				versions[i] = version.Parse(adv.Ecosystem, r.Version)
 			}
-			parsed[adv.Ecosystem] = releases
+			parsed[adv.Ecosystem] = versions
 		}
 		m := adv.Matcher()
-		for i, r := range pkg.Releases {
-			if m.Affects(releases[i]) {
-				a.flag(r.Version, f)
+		for i, r := range releases {
+			if m.Affects(versions[i]) {
+				out[r.Version] = append(out[r.Version], f)
 			}
 		}
 	}
+	return out
 }
 
 func describe(adv advisory.Advisory) string {

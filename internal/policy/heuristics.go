@@ -42,7 +42,7 @@ func (e *Engine) heuristics(pkg *Package, a *Assessment) {
 		}
 		a.Package.add(h.scoreFinding("package", pkgSignals, pkgDecision))
 	}
-	for version, own := range releaseSignals(pkg.Releases) {
+	for version, own := range a.index.releaseSignals() {
 		all := slices.Concat(pkgSignals, own)
 		d := h.decide(total(all))
 		if d == Allow {
@@ -53,9 +53,9 @@ func (e *Engine) heuristics(pkg *Package, a *Assessment) {
 			shown = all
 		}
 		for _, s := range shown {
-			a.flag(version, s.finding(d))
+			a.heuristic[version] = append(a.heuristic[version], s.finding(d))
 		}
-		a.flag(version, h.scoreFinding("release", all, d))
+		a.heuristic[version] = append(a.heuristic[version], h.scoreFinding("release", all, d))
 	}
 }
 

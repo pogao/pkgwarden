@@ -2,8 +2,12 @@
 package policy
 
 import (
+	"reflect"
+	"slices"
+	"sync"
 	"time"
 
+	"github.com/pogao/pkgwarden/internal/advisory"
 	"github.com/pogao/pkgwarden/internal/ecosystem"
 )
 
@@ -24,6 +28,57 @@ type Package struct {
 	// WeeklyDownloads is a recent weekly download estimate, or UnknownDownloads.
 	WeeklyDownloads int64
 	Releases        []Release
+	index           *releaseIndex
+}
+
+// Index derives once what each assessment of p would otherwise derive from
+// p.Releases, so that assessments of p and of copies made from it after
+// this call share it. p.Releases must not change after Index.
+func (p *Package) Index() { p.index = newReleaseIndex(p.Releases) }
+
+func (p *Package) releaseIndex() *releaseIndex {
+	if p.index != nil {
+		return p.index
+	}
+	return newReleaseIndex(p.Releases)
+}
+
+type releaseIndex struct {
+	releases  []Release
+	published map[string]bool
+
+	signalsOnce sync.Once
+	signals     map[string][]signal
+
+	advisedMu  sync.Mutex
+	advisedBy  *Engine
+	advisedFor []advisory.Advisory
+	advisedMap map[string][]Finding
+}
+
+func newReleaseIndex(releases []Release) *releaseIndex {
+	x := &releaseIndex{releases: releases, published: make(map[string]bool, len(releases))}
+	for _, r := range releases {
+		x.published[r.Version] = true
+	}
+	return x
+}
+
+func (x *releaseIndex) releaseSignals() map[string][]signal {
+	x.signalsOnce.Do(func() { x.signals = releaseSignals(x.releases) })
+	return x.signals
+}
+
+// advised returns e's findings for the releases that advs affect, computed
+// again only when e or advs differ from the last call. Callers must not
+// change the map.
+func (x *releaseIndex) advised(e *Engine, advs []advisory.Advisory) map[string][]Finding {
+	x.advisedMu.Lock()
+	defer x.advisedMu.Unlock()
+	if x.advisedMap == nil || x.advisedBy != e || !reflect.DeepEqual(x.advisedFor, advs) {
+		x.advisedBy, x.advisedFor, x.advisedMap = e, advs, e.matchReleases(x.releases, advs)
+	}
+	return x.advisedMap
 }
 
 // Release is one published version of a Package.
@@ -127,11 +182,16 @@ func (v Verdict) merge(o Verdict) Verdict {
 // Assessment holds the verdict for every release of one package.
 type Assessment struct {
 	// Package carries findings that apply to every release.
-	Package  Verdict
-	releases map[string]Verdict
+	Package Verdict
+	// Each release's findings, in the order Release reports them. advised
+	// is shared with other assessments.
+	cooldown  map[string][]Finding
+	advised   map[string][]Finding
+	heuristic map[string][]Finding
 	// heldBack blocks each file still inside the cooldown in a release
 	// that is past it.
 	heldBack map[fileKey]Finding
+	index    *releaseIndex
 }
 
 type fileKey struct{ version, name string }
@@ -139,9 +199,11 @@ type fileKey struct{ version, name string }
 // Release returns the verdict for version, including package-wide findings.
 // A version the registry did not report is blocked.
 func (a *Assessment) Release(version string) Verdict {
-	rv, ok := a.releases[version]
-	if !ok {
-		rv = Verdict{}
+	var rv Verdict
+	for _, f := range slices.Concat(a.cooldown[version], a.advised[version], a.heuristic[version]) {
+		rv.add(f)
+	}
+	if !a.index.published[version] {
 		rv.add(Finding{Rule: RuleUnknownRelease, Decision: Block, Reason: "version " + version + " is not published upstream"})
 	}
 	return a.Package.merge(rv)

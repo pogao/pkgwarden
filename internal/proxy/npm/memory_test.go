@@ -12,9 +12,12 @@ import (
 	"runtime/debug"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/pogao/pkgwarden/internal/advisory"
+	"github.com/pogao/pkgwarden/internal/ecosystem"
 	"github.com/pogao/pkgwarden/internal/policy"
 	"github.com/pogao/pkgwarden/internal/proxy"
 	"github.com/pogao/pkgwarden/internal/proxy/npm"
@@ -73,6 +76,14 @@ func skipAllocationBudgetUnderRace(t *testing.T) {
 // releases with pad bytes each as package big, and that packument.
 func bigProxy(t *testing.T, pad int) (*httptest.Server, []byte) {
 	t.Helper()
+	srv, _, doc := releasesProxy(t, 2000, pad, fakeSource(nil))
+	return srv, doc
+}
+
+// releasesProxy is bigProxy for a package of n releases, with heuristics
+// on and advisories from src. It also returns the npm registry.
+func releasesProxy(t *testing.T, n, pad int, src fakeSource) (*httptest.Server, *npm.Registry, []byte) {
+	t.Helper()
 	var doc []byte
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -85,8 +96,10 @@ func bigProxy(t *testing.T, pad int) (*httptest.Server, []byte) {
 		}
 	}))
 	t.Cleanup(upstream.Close)
-	doc = largePackument(t, upstream.URL, 2000, pad)
-	engine := policy.New(policy.Config{Cooldown: week}, fakeSource(nil))
+	doc = largePackument(t, upstream.URL, n, pad)
+	engine := policy.New(policy.Config{Cooldown: week, Heuristics: policy.HeuristicsConfig{
+		Enabled: true, NewPackageAge: week, LowWeeklyDownloads: 100, WarnScore: 30, BlockScore: 70,
+	}}, src)
 	reg := npm.New(npm.Options{
 		Registry:  upstream.URL,
 		Downloads: upstream.URL,
@@ -95,7 +108,7 @@ func bigProxy(t *testing.T, pad int) (*httptest.Server, []byte) {
 	})
 	srv := httptest.NewServer(proxy.NewServer(engine, reg))
 	t.Cleanup(srv.Close)
-	return srv, doc
+	return srv, reg, doc
 }
 
 // together serves srv's handler at a new URL where each of the first n
@@ -254,4 +267,82 @@ func TestConcurrentPackumentRequestsKeepTheirOwnTarballLinks(t *testing.T) {
 		})
 	}
 	wg.Wait()
+}
+
+// everyRelease is an advisory that warns about every release of big.
+var everyRelease = fakeSource{"big": {{ID: "GHSA-0000-0000-0000", Source: "osv", Kind: advisory.Vulnerability,
+	Ecosystem: ecosystem.Npm, Ranges: []advisory.Range{{Introduced: "0"}}}}}
+
+func heapAlloc() uint64 {
+	var m runtime.MemStats
+	// The second collection empties the sync.Pool victim caches the first
+	// one filled.
+	runtime.GC()
+	runtime.GC()
+	runtime.ReadMemStats(&m)
+	return m.HeapAlloc
+}
+
+// heldWhileWaiting returns the heap that each of n concurrent packument
+// requests holds while it waits for the shared rewrite, for a package with
+// the given number of releases.
+func heldWhileWaiting(t *testing.T, releases, n int) uint64 {
+	srv, reg, _ := releasesProxy(t, releases, 0, everyRelease)
+	packument := srv.URL + "/npm/big"
+	if code, err := send(packument, "", io.Discard); err != nil || code != http.StatusOK {
+		t.Fatalf("first packument request: status %d, error %v", code, err)
+	}
+	release := reg.HoldRewrites()
+	before := heapAlloc()
+	var wg sync.WaitGroup
+	var failed atomic.Int32
+	for range n {
+		wg.Go(func() {
+			if code, err := send(packument, "", io.Discard); err != nil || code != http.StatusOK {
+				failed.Add(1)
+				t.Errorf("status %d, error %v, want 200", code, err)
+			}
+		})
+	}
+	deadline := time.Now().Add(30 * time.Second)
+	for reg.RewriteWaiters() < n && failed.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	waiting := reg.RewriteWaiters()
+	after := heapAlloc()
+	release()
+	wg.Wait()
+	if waiting < n {
+		t.Fatalf("%d of %d requests reached the rewrite", waiting, n)
+	}
+	return (after - min(after, before)) / uint64(n)
+}
+
+func TestRequestsWaitingForARewriteHoldMemoryIndependentOfReleaseCount(t *testing.T) {
+	// macOS queues at most 128 connections that the server has not yet
+	// accepted, and resets the rest.
+	const n = 100
+	few := heldWhileWaiting(t, 40, n)
+	many := heldWhileWaiting(t, 20000, n)
+	t.Logf("each of %d requests waiting for a rewrite held %d bytes for 40 releases, %d bytes for 20000", n, few, many)
+	if extra := many - min(many, few); extra > 8<<10 {
+		t.Errorf("each request waiting for a rewrite of a 20000-release package held %d bytes more than for 40 releases, want at most 8 KiB", extra)
+	}
+}
+
+func TestTarballRequestAllocationIndependentOfReleaseCount(t *testing.T) {
+	allocated := func(releases int) uint64 {
+		srv, _, _ := releasesProxy(t, releases, 0, everyRelease)
+		tarball := srv.URL + "/npm/big/-/big-1.7.0.tgz"
+		if code, err := send(tarball, "", io.Discard); err != nil || code != http.StatusOK {
+			t.Fatalf("first tarball request: status %d, error %v", code, err)
+		}
+		return bytesAllocated(func() { send(tarball, "", io.Discard) })
+	}
+	few, many := allocated(40), allocated(20000)
+	t.Logf("one tarball request allocated %d bytes for 40 releases, %d bytes for 20000", few, many)
+	skipAllocationBudgetUnderRace(t)
+	if extra := many - min(many, few); extra > 64<<10 {
+		t.Errorf("a tarball request for a 20000-release package allocated %d bytes more than for 40 releases, want at most 64 KiB", extra)
+	}
 }

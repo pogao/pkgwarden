@@ -1,6 +1,9 @@
 package npm
 
-import "context"
+import (
+	"context"
+	"encoding/binary"
+)
 
 // rewriteBytes bounds the packument bytes being parsed and filtered at
 // once, since rewriting takes several times a document's size in memory.
@@ -12,8 +15,9 @@ const rewriteBytes = 64 << 20
 // tarball links point.
 type rewriteKey struct {
 	snap *snapshot
-	// allowed has one byte for each of snap.pkg.Releases, 1 if allowed.
-	allowed     string
+	// blocked holds the index in snap.pkg.Releases of each blocked release,
+	// as uvarints.
+	blocked     string
 	tarballBase string
 }
 
@@ -31,13 +35,13 @@ type flight struct {
 // rewrite returns the packument in snap rewritten for allowed and
 // tarballBase. Concurrent requests for the same rewrite share one.
 func (r *Registry) rewrite(ctx context.Context, snap *snapshot, allowed func(string) bool, tarballBase string) (*rewritten, error) {
-	decisions := make([]byte, len(snap.pkg.Releases))
+	var blocked []byte
 	for i, rel := range snap.pkg.Releases {
-		if allowed(rel.Version) {
-			decisions[i] = 1
+		if !allowed(rel.Version) {
+			blocked = binary.AppendUvarint(blocked, uint64(i))
 		}
 	}
-	key := rewriteKey{snap: snap, allowed: string(decisions), tarballBase: tarballBase}
+	key := rewriteKey{snap: snap, blocked: string(blocked), tarballBase: tarballBase}
 
 	r.mu.Lock()
 	f := r.flights[key]

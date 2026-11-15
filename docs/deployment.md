@@ -102,13 +102,16 @@ pkgwarden reads at most 128 MiB of a metadata document and drops the rest. A JSO
 
 ## Give it enough memory
 
-pkgwarden's memory has three parts:
+pkgwarden's memory has four parts:
 
 - The metadata cache, which holds at most `-metadata-cache-bytes` (default 256 MiB).
 - Rewriting npm packuments. To answer a packument request, pkgwarden parses the packument and writes it out again without the blocked versions. The rewrite needs about ten times the packument's size in memory while it runs. Concurrent requests for the same packument share one rewrite. pkgwarden rewrites at most 64 MiB of different packuments at a time, or one larger packument alone, so their rewrites wait for each other instead of adding up.
 - The responses in progress, each about the size of the document it sends. Concurrent responses with the same packument share one copy of it.
+- The connections in progress. pkgwarden uses 60 to 90 KiB for each one while its request runs, however many releases the package has. The kernel also keeps a send buffer for each connection that is still sending a response, and the container's memory limit counts it. In the runs below, these buffers held 70 to 150 KiB per connection.
 
 The largest packument in common use is renovate's, at about 75 MB. In five runs on 2026-11-14, pkgwarden cycled 25 of the largest packuments on npm, about 405 MiB in all, through its cache twice, so the cache filled and dropped documents. Then, while a third cycle ran, it answered 16 concurrent packument requests and 16 concurrent tarball requests for renovate. Its resident memory peaked between 1.26 and 1.41 GiB. With `GOMEMLIMIT=1600MiB`, it peaked between 1.27 and 1.37 GiB.
+
+Many concurrent clients add to that. On 2026-11-15, pkgwarden ran with the settings below on 4 CPUs, with typescript's 16 MB packument in its cache. A load generator on other CPUs kept a fixed number of requests for that packument in flight for 20 seconds. In two runs at each size, every request succeeded with 4,096 clients and with 8,192 clients. The container's memory peaked between 1.15 and 1.22 GiB with 4,096 clients, and between 1.52 and 1.76 GiB with 8,192 clients. With 16,384 clients, it reached the 2 GiB limit, and most requests timed out before the network delivered their 16 MB. If more than about 8,000 clients can reach pkgwarden at once, add about 250 KiB of memory for each client past that.
 
 Give the container 2 GiB of memory, and set `GOMEMLIMIT` to about 80% of the limit, so that the Go garbage collector works harder before the container runs out:
 

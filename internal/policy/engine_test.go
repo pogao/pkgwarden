@@ -584,3 +584,29 @@ func TestHeuristicsFirstReleaseWithInstallScripts(t *testing.T) {
 	})
 	assertMentions(t, assertDecision(t, a, "0.1.0", Warn), "first release runs install scripts", "release scores 45")
 }
+
+func TestIndexedPackageSeesChangedAdvisories(t *testing.T) {
+	pkg := Package{Ecosystem: ecosystem.Npm, Name: "widget", WeeklyDownloads: UnknownDownloads, Releases: []Release{
+		{Version: "1.0.0", Published: daysAgo(400)},
+		{Version: "2.0.0", Published: daysAgo(300)},
+	}}
+	pkg.Index()
+	src := &fakeSource{advs: []advisory.Advisory{{ID: "MAL-1", Kind: advisory.Malicious, Ecosystem: ecosystem.Npm,
+		Ranges: []advisory.Range{{Introduced: "0", Fixed: "2.0.0"}}}}}
+	e := newTestEngine(Config{}, src)
+	blocked := func(e *Engine) []bool {
+		cp := pkg
+		a := e.Assess(context.Background(), &cp)
+		return []bool{!a.Allowed("1.0.0"), !a.Allowed("2.0.0")}
+	}
+	if got := blocked(e); !slices.Equal(got, []bool{true, false}) {
+		t.Fatalf("with MAL-1 fixed in 2.0.0, blocked = %v, want [true false]", got)
+	}
+	src.advs = append(src.advs, advisory.Advisory{ID: "MAL-2", Kind: advisory.Malicious, Ecosystem: ecosystem.Npm, Versions: []string{"2.0.0"}})
+	if got := blocked(e); !slices.Equal(got, []bool{true, true}) {
+		t.Errorf("after MAL-2 named 2.0.0, blocked = %v, want [true true]", got)
+	}
+	if got := blocked(newTestEngine(Config{}, fakeSource{})); !slices.Equal(got, []bool{false, false}) {
+		t.Errorf("another engine with no advisories blocked %v, want [false false]", got)
+	}
+}
