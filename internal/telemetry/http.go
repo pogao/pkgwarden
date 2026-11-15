@@ -23,13 +23,9 @@ func Middleware(next http.Handler) http.Handler {
 		start := time.Now()
 		id := requestID(r.Header.Get(requestIDHeader))
 		w.Header().Set(requestIDHeader, id)
-		// net/http ends r.Context() with a bare context.Canceled. The
-		// handler's context ends with errClientLeft instead, so that
-		// Transport can tell a client that left from pkgwarden's own
-		// cancellations.
-		ctx, cancel := context.WithCancelCause(WithRequestID(context.WithoutCancel(r.Context()), id))
-		defer cancel(nil)
-		defer context.AfterFunc(r.Context(), func() { cancel(errClientLeft) })()
+		ctx, release := untilClientLeaves(r.Context())
+		defer release()
+		ctx = WithRequestID(ctx, id)
 		rec := &recorder{ResponseWriter: w, clientCtx: r.Context()}
 		next.ServeHTTP(rec, r.WithContext(ctx))
 
@@ -63,6 +59,19 @@ func Middleware(next http.Handler) http.Handler {
 const statusClientClosedRequest = 499
 
 var errClientLeft = fmt.Errorf("client closed the request: %w", context.Canceled)
+
+// untilClientLeaves returns a context with the values of client that ends
+// with the cause errClientLeft when client ends. A context derived from
+// client would end with the cause net/http gives, a bare context.Canceled.
+// release frees the context.
+func untilClientLeaves(client context.Context) (ctx context.Context, release func()) {
+	ctx, cancel := context.WithCancelCause(context.WithoutCancel(client))
+	stop := context.AfterFunc(client, func() { cancel(errClientLeft) })
+	return ctx, func() {
+		stop()
+		cancel(nil)
+	}
+}
 
 // recorder notes the status and size of a response.
 type recorder struct {

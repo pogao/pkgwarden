@@ -255,9 +255,7 @@ func TestTransportCountsARequestItsClientAbandonedAsCanceled(t *testing.T) {
 	host := strings.TrimPrefix(upstream.URL, "http://")
 
 	tests := []struct {
-		name string
-		// upstreamCtx derives the outbound request's context from the
-		// inbound one, as an adapter does.
+		name        string
 		upstreamCtx func(context.Context) (context.Context, context.CancelFunc)
 		timeout     time.Duration
 		leave       bool
