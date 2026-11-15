@@ -44,7 +44,7 @@ The histograms use these bucket bounds in seconds: 0.005, 0.01, 0.025, 0.05, 0.1
 | `ecosystem` on the other metrics | `npm`, `pypi`, `rubygems`, `go`, or `cargo`. |
 | `method` | `GET`, `HEAD`, `POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS`, `CONNECT`, or `TRACE`. Any other method is `other`. |
 | `code` on `http_requests_total` | The response status, such as `200` or `403`, or `499` when the client closed the connection before pkgwarden answered. |
-| `code` on `upstream_requests_total` | The upstream status, or `error` when no response arrived, such as after a timeout or a refused connection. |
+| `code` on `upstream_requests_total` | The upstream status. `canceled` when no response arrived because pkgwarden stopped the request after its client left, such as a download that the client abandoned. `error` when no response arrived for any other reason, such as a timeout or a refused connection. |
 | `host` | The host and port of the outbound URL, such as `registry.npmjs.org`. Each redirect hop counts as its own request to its own host. |
 | `stage` | `metadata` for a package document: a packument or version manifest, a simple index page, a compact index file, a Go version list or `@latest`, or a sparse index file. `artifact` for a request for one release's file. |
 | `decision` | `allow`, `warn`, or `block`. |
@@ -77,7 +77,7 @@ Each query answers one question a security engineer asks about a running proxy.
 | Is the cooldown holding back new releases? | `sum by (ecosystem) (increase(pkgwarden_findings_total{rule="cooldown"}[24h]))` |
 | Are advisory lookups failing, so that packages are blocked or served unchecked? | `sum(increase(pkgwarden_findings_total{rule="advisory-lookup"}[15m])) > 0` |
 | How many package files went out, and how much data? | `sum by (ecosystem) (increase(pkgwarden_artifacts_served_total[24h]))` and `sum by (ecosystem) (increase(pkgwarden_artifact_bytes_total[24h]))` |
-| Which upstream host is failing? | `sum by (host) (rate(pkgwarden_upstream_requests_total{code=~"error\|5.."}[5m])) / sum by (host) (rate(pkgwarden_upstream_requests_total[5m]))` |
+| Which upstream host is failing? | `sum by (host) (rate(pkgwarden_upstream_requests_total{code=~"error\|5.."}[5m])) / sum by (host) (rate(pkgwarden_upstream_requests_total{code!="canceled"}[5m]))` |
 | Is a registry rate-limiting pkgwarden? | `sum by (host) (rate(pkgwarden_upstream_requests_total{code="429"}[5m]))` |
 | How slow is each upstream? | `histogram_quantile(0.95, sum by (host, le) (rate(pkgwarden_upstream_request_duration_seconds_bucket[5m])))` |
 | How often do the caches answer? | `sum by (cache) (rate(pkgwarden_cache_requests_total{result="hit"}[1h])) / sum by (cache) (rate(pkgwarden_cache_requests_total[1h]))` |
