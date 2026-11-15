@@ -3,12 +3,14 @@ package telemetry_test
 import (
 	"context"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pogao/pkgwarden/internal/telemetry"
 	"github.com/pogao/pkgwarden/internal/telemetry/telemetrytest"
@@ -238,6 +240,84 @@ func TestTransportCountsFailures(t *testing.T) {
 	up := logs.Messages(t, "upstream")
 	if len(up) != 1 || up[0]["err"] == nil || up[0]["status"] != nil {
 		t.Errorf("upstream lines %v, want one with err and no status", up)
+	}
+}
+
+func TestTransportCountsARequestItsClientAbandonedAsCanceled(t *testing.T) {
+	arrived := make(chan struct{}, 1)
+	release := make(chan struct{})
+	upstream := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		arrived <- struct{}{}
+		<-release
+	}))
+	defer upstream.Close()
+	defer close(release)
+	host := strings.TrimPrefix(upstream.URL, "http://")
+
+	tests := []struct {
+		name string
+		// upstreamCtx derives the outbound request's context from the
+		// inbound one, as an adapter does.
+		upstreamCtx func(context.Context) (context.Context, context.CancelFunc)
+		timeout     time.Duration
+		leave       bool
+		code        string
+	}{
+		{"client left during the request", context.WithCancel, 0, true, "canceled"},
+		{"client left during a request on a derived timeout", func(ctx context.Context) (context.Context, context.CancelFunc) {
+			return context.WithTimeout(ctx, time.Minute)
+		}, 0, true, "canceled"},
+		{"shared fetch timed out after its client left", func(ctx context.Context) (context.Context, context.CancelFunc) {
+			return context.WithTimeout(context.WithoutCancel(ctx), 100*time.Millisecond)
+		}, 0, true, "error"},
+		{"pkgwarden canceled the request itself", func(ctx context.Context) (context.Context, context.CancelFunc) {
+			ctx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+			time.AfterFunc(100*time.Millisecond, cancel)
+			return ctx, cancel
+		}, 0, false, "error"},
+		{"upstream client timed out", context.WithCancel, 100 * time.Millisecond, false, "error"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			telemetrytest.CaptureLogs(t)
+			counts := func() map[string]float64 {
+				m := map[string]float64{}
+				for _, code := range []string{"canceled", "error"} {
+					m[code] = telemetrytest.Value(t, "pkgwarden_upstream_requests_total", map[string]string{"host": host, "code": code})
+				}
+				return m
+			}
+			before := counts()
+			client := &http.Client{Transport: telemetry.Transport(nil), Timeout: tt.timeout}
+			inbound, leave := context.WithCancel(context.Background())
+			defer leave()
+			go func() {
+				<-arrived
+				if tt.leave {
+					leave()
+				}
+			}()
+			h := telemetry.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				ctx, cancel := tt.upstreamCtx(r.Context())
+				defer cancel()
+				req, _ := http.NewRequestWithContext(ctx, "GET", upstream.URL+"/left-pad/-/left-pad-1.3.0.tgz", nil)
+				if resp, err := client.Do(req); err == nil {
+					resp.Body.Close()
+					t.Error("upstream request succeeded, want it to end without a response")
+				}
+			}))
+			h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/npm/left-pad/-/left-pad-1.3.0.tgz", nil).WithContext(inbound))
+
+			grew := counts()
+			for code := range grew {
+				grew[code] -= before[code]
+			}
+			want := map[string]float64{"canceled": 0, "error": 0}
+			want[tt.code] = 1
+			if !maps.Equal(grew, want) {
+				t.Errorf("pkgwarden_upstream_requests_total by code grew by %v, want %v", grew, want)
+			}
+		})
 	}
 }
 
