@@ -3,14 +3,18 @@ package proxy
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
 	"testing/synctest"
 	"time"
 
+	"github.com/pogao/pkgwarden/internal/proxy/proxytest"
 	"github.com/pogao/pkgwarden/internal/telemetry"
 	"github.com/pogao/pkgwarden/internal/telemetry/telemetrytest"
 )
@@ -198,5 +202,60 @@ func TestDocumentOverHalfTheCacheBudgetIsNotCached(t *testing.T) {
 
 	if calls["/small"] != 1 || calls["/large"] != 2 {
 		t.Errorf("upstream calls %v, want the small document cached and the large one fetched each time", calls)
+	}
+}
+
+func relayServer(t *testing.T, writeTimeout time.Duration, upstream http.Handler) *httptest.Server {
+	t.Helper()
+	old := relayWriteTimeout
+	relayWriteTimeout = writeTimeout
+	t.Cleanup(func() { relayWriteTimeout = old })
+	telemetrytest.CaptureLogs(t)
+	up := httptest.NewServer(upstream)
+	t.Cleanup(up.Close)
+	srv := httptest.NewServer(telemetry.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp, err := up.Client().Get(up.URL + r.URL.Path)
+		if err != nil {
+			WriteError(w, err)
+			return
+		}
+		defer resp.Body.Close()
+		Relay(w, r, resp)
+	})))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func dial(t *testing.T, srv *httptest.Server) net.Conn {
+	t.Helper()
+	conn, err := net.Dial("tcp", srv.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { conn.Close() })
+	return conn
+}
+
+func send(t *testing.T, conn net.Conn, method, path string) {
+	t.Helper()
+	if _, err := fmt.Fprintf(conn, "%s %s HTTP/1.1\r\nHost: pkgwarden.test\r\n\r\n", method, path); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRelayDropsAClientThatStopsReading(t *testing.T) {
+	file := proxytest.NewFile()
+	file.Size = 64 << 20
+	conn := dial(t, relayServer(t, 500*time.Millisecond, file))
+
+	start := time.Now()
+	send(t, conn, http.MethodGet, "/file")
+	n := file.Written(t)
+
+	if d := time.Since(start); d > relayWriteTimeout+3*time.Second {
+		t.Errorf("the upstream transfer ended %v after the client stopped reading, want about %v", d, relayWriteTimeout)
+	}
+	if n == file.Size {
+		t.Errorf("upstream sent all %d bytes to a client that read none, want the transfer cut short", n)
 	}
 }

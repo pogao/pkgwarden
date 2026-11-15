@@ -41,6 +41,8 @@ const fetchTimeout = 2 * time.Minute
 // lookup that runs out of time counts as policy.UnknownDownloads.
 const DownloadsTimeout = 5 * time.Second
 
+var relayWriteTimeout = 60 * time.Second
+
 // Upstream fetches from upstream registries. Metadata fetched through Fetch
 // or FetchParsed is cached briefly and concurrent identical requests share
 // one round trip. Artifacts go through Open and are never cached, and
