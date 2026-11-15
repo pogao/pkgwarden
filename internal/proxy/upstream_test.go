@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -257,5 +258,62 @@ func TestRelayDropsAClientThatStopsReading(t *testing.T) {
 	}
 	if n == file.Size {
 		t.Errorf("upstream sent all %d bytes to a client that read none, want the transfer cut short", n)
+	}
+}
+
+func TestRelayKeepsAClientThatReadsSlowly(t *testing.T) {
+	file := proxytest.NewFile()
+	srv := relayServer(t, 500*time.Millisecond, file)
+
+	start := time.Now()
+	resp, err := srv.Client().Get(srv.URL + "/file")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var got int64
+	for {
+		n, err := io.CopyN(io.Discard, resp.Body, 256<<10)
+		got += n
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("read %d of %d bytes in %v, then: %v", got, file.Size, time.Since(start), err)
+		}
+		time.Sleep(relayWriteTimeout / 5)
+	}
+
+	if got != int64(file.Size) {
+		t.Errorf("read %d of %d bytes", got, file.Size)
+	}
+	if n := file.Written(t); n != file.Size {
+		t.Errorf("upstream sent %d of %d bytes", n, file.Size)
+	}
+}
+
+func TestRelayLeavesTheNextResponseOnTheConnectionAlone(t *testing.T) {
+	srv := relayServer(t, 200*time.Millisecond, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		io.WriteString(w, "relayed")
+	}))
+	conn := dial(t, srv)
+	br := bufio.NewReader(conn)
+
+	send(t, conn, http.MethodGet, "/file")
+	resp, err := http.ReadResponse(br, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if body, err := io.ReadAll(resp.Body); err != nil || string(body) != "relayed" {
+		t.Fatalf("GET = %q, %v; want %q", body, err, "relayed")
+	}
+	time.Sleep(2 * relayWriteTimeout)
+	send(t, conn, http.MethodHead, "/file")
+	resp, err = http.ReadResponse(br, &http.Request{Method: http.MethodHead})
+	if err != nil {
+		t.Fatalf("HEAD %v after a GET on the same connection: %v", 2*relayWriteTimeout, err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("HEAD %v after a GET on the same connection: status %d, want 200", 2*relayWriteTimeout, resp.StatusCode)
 	}
 }

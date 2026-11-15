@@ -224,7 +224,17 @@ func relay(w http.ResponseWriter, req *http.Request, resp *http.Response) (int64
 	if req.Method == http.MethodHead {
 		return 0, nil
 	}
-	return io.Copy(w, resp.Body)
+	return io.Copy(deadlineWriter{w, http.NewResponseController(w)}, resp.Body)
+}
+
+type deadlineWriter struct {
+	w  io.Writer
+	rc *http.ResponseController
+}
+
+func (d deadlineWriter) Write(p []byte) (int, error) {
+	d.rc.SetWriteDeadline(time.Now().Add(relayWriteTimeout))
+	return d.w.Write(p)
 }
 
 // WriteError maps an upstream failure to a response.
