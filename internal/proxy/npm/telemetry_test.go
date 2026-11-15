@@ -1,10 +1,13 @@
 package npm_test
 
 import (
+	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -21,16 +24,40 @@ import (
 // it waits for every request, so their log lines are complete.
 func tracedProxy(t *testing.T, src fakeSource) *httptest.Server {
 	t.Helper()
+	return tracedProxyTo(t, src, fakeRegistry(t).URL, 0)
+}
+
+func tracedProxyTo(t *testing.T, src fakeSource, registry string, timeout time.Duration) *httptest.Server {
+	t.Helper()
 	engine := policy.New(policy.Config{Cooldown: week}, src)
 	reg := npm.New(npm.Options{
-		Registry:  fakeRegistry(t).URL,
+		Registry:  registry,
 		Downloads: fakeDownloads(t).URL,
 		Engine:    engine,
-		HTTP:      proxy.NewUpstream(&http.Client{Transport: telemetry.Transport(nil)}, "pkgwarden-test", time.Minute, 64<<20),
+		HTTP:      proxy.NewUpstream(&http.Client{Transport: telemetry.Transport(nil), Timeout: timeout}, "pkgwarden-test", time.Minute, 64<<20),
 	})
 	srv := httptest.NewServer(telemetry.Middleware(proxy.NewServer(engine, reg)))
 	t.Cleanup(srv.Close)
 	return srv
+}
+
+func hangingRegistry(t *testing.T) (url string, arrived <-chan struct{}) {
+	t.Helper()
+	reached := make(chan struct{})
+	var once sync.Once
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		once.Do(func() { close(reached) })
+		<-release
+	}))
+	t.Cleanup(srv.Close)
+	t.Cleanup(func() { close(release) })
+	return srv.URL, reached
+}
+
+func npmGets(t *testing.T, code string) float64 {
+	t.Helper()
+	return telemetrytest.Value(t, "pkgwarden_http_requests_total", map[string]string{"ecosystem": "npm", "method": "GET", "code": code})
 }
 
 func linesWithID(lines []map[string]any, id string) []map[string]any {
@@ -137,5 +164,60 @@ func TestAllowedDownloadCountsTheBytesServed(t *testing.T) {
 	}
 	if d := telemetrytest.Value(t, "pkgwarden_artifact_bytes_total", labels) - beforeBytes; d != float64(n) {
 		t.Errorf("artifact_bytes_total grew by %v, want %d", d, n)
+	}
+}
+
+func TestClientThatGivesUpIsCountedAs499(t *testing.T) {
+	logs := telemetrytest.CaptureLogs(t)
+	registry, arrived := hangingRegistry(t)
+	srv := tracedProxyTo(t, nil, registry, 0)
+	before499, before502 := npmGets(t, "499"), npmGets(t, "502")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	req, _ := http.NewRequestWithContext(ctx, "GET", srv.URL+"/npm/left-pad", nil)
+	req.Header.Set("X-Request-Id", "client-gave-up-1")
+	errc := make(chan error, 1)
+	go func() {
+		_, err := http.DefaultClient.Do(req)
+		errc <- err
+	}()
+	select {
+	case <-arrived:
+	case err := <-errc:
+		t.Fatalf("request ended with %v before the proxy asked the registry for the packument", err)
+	}
+	cancel()
+	if err := <-errc; !errors.Is(err, context.Canceled) {
+		t.Fatalf("request ended with %v, want the client's cancellation", err)
+	}
+	srv.Close()
+
+	if d := npmGets(t, "499") - before499; d != 1 {
+		t.Errorf("http_requests_total for npm GET code 499 grew by %v, want 1", d)
+	}
+	if d := npmGets(t, "502") - before502; d != 0 {
+		t.Errorf("http_requests_total for npm GET code 502 grew by %v, want 0", d)
+	}
+	if lines := linesWithID(logs.Messages(t, "request"), "client-gave-up-1"); len(lines) != 1 || lines[0]["status"] != 499.0 {
+		t.Errorf("request lines for the ID %v, want one with status 499", lines)
+	}
+}
+
+func TestUpstreamTimeoutIsCountedAs502(t *testing.T) {
+	registry, _ := hangingRegistry(t)
+	srv := tracedProxyTo(t, nil, registry, 150*time.Millisecond)
+	before499, before502 := npmGets(t, "499"), npmGets(t, "502")
+
+	resp, body := get(t, srv.URL+"/npm/left-pad")
+	srv.Close()
+
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Fatalf("status %d: %s, want 502 after the upstream client timed out", resp.StatusCode, body)
+	}
+	if d := npmGets(t, "502") - before502; d != 1 {
+		t.Errorf("http_requests_total for npm GET code 502 grew by %v, want 1", d)
+	}
+	if d := npmGets(t, "499") - before499; d != 0 {
+		t.Errorf("http_requests_total for npm GET code 499 grew by %v, want 0", d)
 	}
 }
