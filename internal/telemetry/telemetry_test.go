@@ -1,10 +1,12 @@
 package telemetry_test
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -124,6 +126,47 @@ func TestMiddlewareLabels(t *testing.T) {
 			lines := logs.Messages(t, "request")
 			if len(lines) != 1 || lines[0]["level"] != tt.level {
 				t.Errorf("request lines %v, want one at %s", lines, tt.level)
+			}
+		})
+	}
+}
+
+func TestMiddlewareCountsAClientThatLeftAs499(t *testing.T) {
+	tests := []struct {
+		name   string
+		serve  func(w http.ResponseWriter, leave func())
+		status int
+	}{
+		{"left before the handler wrote anything", func(_ http.ResponseWriter, leave func()) { leave() }, 499},
+		{"left before the handler set a status", func(w http.ResponseWriter, leave func()) {
+			leave()
+			w.WriteHeader(http.StatusForbidden)
+		}, 499},
+		{"left before the handler wrote a body", func(w http.ResponseWriter, leave func()) {
+			leave()
+			io.WriteString(w, "ok\n")
+		}, 499},
+		{"left after the handler set a status", func(w http.ResponseWriter, leave func()) {
+			w.WriteHeader(http.StatusOK)
+			leave()
+			io.WriteString(w, "ok\n")
+		}, 200},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			logs := telemetrytest.CaptureLogs(t)
+			labels := map[string]string{"ecosystem": "npm", "method": "GET", "code": strconv.Itoa(tt.status)}
+			before := telemetrytest.Value(t, "pkgwarden_http_requests_total", labels)
+			ctx, leave := context.WithCancel(context.Background())
+			defer leave()
+			h := telemetry.Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { tt.serve(w, leave) }))
+			h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/npm/left-pad", nil).WithContext(ctx))
+
+			if d := telemetrytest.Value(t, "pkgwarden_http_requests_total", labels) - before; d != 1 {
+				t.Errorf("pkgwarden_http_requests_total%v grew by %v, want 1", labels, d)
+			}
+			if lines := logs.Messages(t, "request"); len(lines) != 1 || lines[0]["status"] != float64(tt.status) {
+				t.Errorf("request lines %v, want one with status %d", lines, tt.status)
 			}
 		})
 	}
