@@ -73,11 +73,13 @@ If npm fetches the tarball directly, such as from a lockfile, it prints pkgwarde
 
 If the whole package is blocked, or every version of it is, the packument request itself gets the 403, and npm prints the reason in the same form.
 
-Yarn 4 `yarn npm audit` fails when the lockfile holds a version that pkgwarden blocks, because Yarn looks up that version in the filtered packument to check for deprecations:
+Yarn 4 `yarn npm audit` fails when the lockfile holds a version that pkgwarden blocks. Yarn looks up each locked version in the packument to check for deprecations, and it stops when the version has no entry. The two short names in the message change between Yarn builds:
 
 	➤ YN0001: TypeError: Cannot destructure property 'deprecated' of 'ie.versions[ae]' as it is undefined.
 
-Run `yarn npm audit --no-deprecations` to skip that lookup. The audit then reports the same advisories as `registry.npmjs.org`.
+Run `yarn npm audit --no-deprecations` to skip that lookup. The audit then reports the same advisories as `registry.npmjs.org`, but no deprecation notices.
+
+pkgwarden cannot fix this case. Yarn requests the packument for the deprecation check with the same path and headers as for an install, so pkgwarden cannot serve the check a different document. An entry for the blocked version, even an empty one, lets npm, pnpm, Yarn 1, and bun pick that version when no other version matches. Yarn tracks the crash as [yarnpkg/berry#6301](https://github.com/yarnpkg/berry/issues/6301).
 
 ## pip, uv, and Poetry
 
