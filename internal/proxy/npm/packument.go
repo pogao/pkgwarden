@@ -86,6 +86,7 @@ func parseSnapshot(name string, raw []byte) (*snapshot, int64, error) {
 		}
 		size += int64(2*len(v)) + releaseOverhead
 	}
+	s.pkg.Index()
 	return s, size, nil
 }
 
