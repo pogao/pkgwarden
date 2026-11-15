@@ -121,6 +121,22 @@ These cases remain out of reach:
 
 `-allow` still compares the requested path exactly, as [Configuration](configuration.md) describes.
 
+## How npm names are matched
+
+npm names are case-sensitive. The registry still serves legacy packages with capital letters next to unrelated lower-case ones, such as `jQuery` and `jquery`. pkgwarden matches advisories against the exact name, so each of these packages gets only its own advisories.
+
+GitHub files a few npm advisories under a letter case that the registry does not have. For example, it files GHSA-2j8v-hwgc-x698 under `Openclaw`, but the registry has only `openclaw`. GitHub's `affects` filter ignores case, so a lookup for `openclaw` returns that entry, and a lookup for `jQuery` returns the entries for `jquery`. A GitHub entry whose name differs from the package name only in letter case applies when the registry has no package with exactly that name. To find out, pkgwarden sends `HEAD https://registry.npmjs.org/<name>` for that name, without the GitHub token.
+
+| Registry answer | The entry |
+| --- | --- |
+| 404 or 410 | Applies. `openclaw` gets GHSA-2j8v-hwgc-x698. |
+| 200 | Does not apply, because the name belongs to another package. `jQuery` does not get the advisories of `jquery`. |
+| Any other status, or no answer | Applies, and the GitHub lookup fails. |
+
+A failed check fails the lookup, as [When a lookup fails](#when-a-lookup-fails) describes. The package gets an `advisory-lookup` block, or a warning with `-fail-open`, and the result is not cached. A lookup sends the check only when GitHub returns an entry under another letter case. The answer is part of the lookup's result, which is cached for `-advisory-ttl`.
+
+OSV and the OpenSSF dataset match names exactly. An OSV query never returns an entry filed under another letter case. OSV also files GHSA-2j8v-hwgc-x698 under `Openclaw`, so pkgwarden reports that advisory for `openclaw` only with `-ghsa-token`.
+
 ## How results are merged
 
 pkgwarden queries every configured source at the same time and groups advisories that share an identifier. Two advisories belong to the same group if one's ID or alias equals the other's ID or alias, directly or through other members. A GHSA entry, its PYSEC twin, and their CVE collapse into one advisory.

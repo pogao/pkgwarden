@@ -3,6 +3,7 @@ package advisory
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -15,6 +16,7 @@ const (
 	defaultGHSABase = "https://api.github.com"
 	ghsaPageLimit   = 32 << 20
 	ghsaMaxPages    = 50
+	npmRegistry     = "https://registry.npmjs.org"
 )
 
 // GHSA queries the GitHub Advisory Database REST API.
@@ -68,19 +70,27 @@ func (g *GHSA) Lookup(ctx context.Context, eco ecosystem.Ecosystem, name string)
 		"per_page":  {"100"},
 	}.Encode()
 	next := start
+	applies := map[string]bool{eco.Normalize(name): true}
 	var out []Advisory
+	var registryErr error
 	for range ghsaMaxPages {
 		page, link, err := g.page(ctx, next.String())
 		if err != nil {
 			return nil, fmt.Errorf("ghsa lookup %s/%s: %w", eco, name, err)
 		}
+		if eco == ecosystem.Npm {
+			registryErr = errors.Join(registryErr, g.misfiled(ctx, name, page, applies))
+		}
 		for i := range page {
-			if adv, ok := ghsaToAdvisory(&page[i], eco, name); ok {
+			if adv, ok := ghsaToAdvisory(&page[i], eco, applies); ok {
 				out = append(out, adv)
 			}
 		}
 		next = nextLink(link)
 		if next == nil {
+			if registryErr != nil {
+				return out, fmt.Errorf("ghsa lookup %s/%s: %w", eco, name, registryErr)
+			}
 			return out, nil
 		}
 		next = start.ResolveReference(next)
@@ -133,7 +143,54 @@ func nextLink(header string) *url.URL {
 	return nil
 }
 
-func ghsaToAdvisory(g *ghsaAdvisory, eco ecosystem.Ecosystem, name string) (Advisory, bool) {
+// misfiled records in applies whether the entries of page filed under a
+// letter-case variant of the npm package name apply to it. GitHub files a few
+// advisories under a spelling the registry does not have, such as Openclaw
+// for openclaw, but a spelling the registry has is a legacy package of its
+// own, such as jQuery next to jquery. A spelling the registry cannot answer
+// for applies, and the error is returned so that the guess is not cached.
+func (g *GHSA) misfiled(ctx context.Context, name string, page []ghsaAdvisory, applies map[string]bool) error {
+	var errs []error
+	for _, adv := range page {
+		if adv.WithdrawnAt != nil {
+			continue
+		}
+		for _, v := range adv.Vulnerabilities {
+			spelling := v.Package.Name
+			if _, seen := applies[spelling]; seen || v.Package.Ecosystem != ecosystem.Npm.GHSA() || !strings.EqualFold(spelling, name) {
+				continue
+			}
+			exists, err := g.npmHas(ctx, spelling)
+			if err != nil {
+				errs = append(errs, err)
+			}
+			applies[spelling] = !exists
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func (g *GHSA) npmHas(ctx context.Context, name string) (bool, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, npmRegistry+"/"+url.PathEscape(name), nil)
+	if err != nil {
+		return false, err
+	}
+	req.Header.Set("User-Agent", userAgent)
+	resp, err := g.client.Do(req)
+	if err != nil {
+		return false, err
+	}
+	resp.Body.Close()
+	switch resp.StatusCode {
+	case http.StatusOK:
+		return true, nil
+	case http.StatusNotFound, http.StatusGone:
+		return false, nil
+	}
+	return false, fmt.Errorf("HEAD %s: %s", req.URL.Redacted(), resp.Status)
+}
+
+func ghsaToAdvisory(g *ghsaAdvisory, eco ecosystem.Ecosystem, applies map[string]bool) (Advisory, bool) {
 	if g.WithdrawnAt != nil {
 		return Advisory{}, false
 	}
@@ -152,9 +209,8 @@ func ghsaToAdvisory(g *ghsaAdvisory, eco ecosystem.Ecosystem, name string) (Advi
 		adv.Kind = Malicious
 	}
 	matched := false
-	want := eco.Normalize(name)
 	for _, v := range g.Vulnerabilities {
-		if v.Package.Ecosystem != eco.GHSA() || eco.Normalize(v.Package.Name) != want {
+		if v.Package.Ecosystem != eco.GHSA() || !applies[eco.Normalize(v.Package.Name)] {
 			continue
 		}
 		matched = true

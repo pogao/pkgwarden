@@ -209,7 +209,7 @@ The base URL of the OSV API. pkgwarden sends `POST <osv-url>/v1/query`. A traili
 
 ### `-ghsa-token`
 
-A GitHub token. When it is set, pkgwarden also queries the GitHub Advisory Database at `https://api.github.com/advisories` and sends the token as a bearer token. When neither the flag nor `PKGWARDEN_GHSA_TOKEN` is set, pkgwarden uses the value of `GITHUB_TOKEN` at startup. An empty value, such as `-ghsa-token ''`, turns the source off, even when `GITHUB_TOKEN` is set. The help text names `$GITHUB_TOKEN` as the default but never prints a token.
+A GitHub token. When it is set, pkgwarden also queries the GitHub Advisory Database at `https://api.github.com/advisories` and sends the token as a bearer token. For some npm advisories, pkgwarden also asks `registry.npmjs.org` whether a name exists, as [How npm names are matched](advisories.md#how-npm-names-are-matched) describes. When neither the flag nor `PKGWARDEN_GHSA_TOKEN` is set, pkgwarden uses the value of `GITHUB_TOKEN` at startup. An empty value, such as `-ghsa-token ''`, turns the source off, even when `GITHUB_TOKEN` is set. The help text names `$GITHUB_TOKEN` as the default but never prints a token.
 
 ### `-openssf`
 

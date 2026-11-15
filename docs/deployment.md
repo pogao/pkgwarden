@@ -68,7 +68,7 @@ pkgwarden fetches everything at request time. It needs HTTPS access to these hos
 
 | Host | Used for | When |
 | --- | --- | --- |
-| `registry.npmjs.org` | npm metadata, tarballs, `npm audit`, and other npm requests | Always |
+| `registry.npmjs.org` | npm metadata, tarballs, `npm audit`, other npm requests, and checks of npm names in GitHub advisories | Always |
 | `api.npmjs.org` | npm weekly download counts | Always |
 | `pypi.org` | The PyPI JSON API and the root simple index | Always |
 | `files.pythonhosted.org` | PyPI distribution files | Always |
