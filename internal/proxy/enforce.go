@@ -112,8 +112,8 @@ func verdictAttrs(stage Stage, s Subject, v policy.Verdict, rules []string) []an
 const maxMessage = 600
 
 // maxWarning keeps the warning header far below the smallest header limit
-// in front of a client: nginx's default 4 KiB proxy buffer, which also
-// holds the upstream headers pkgwarden relays.
+// in front of a client: nginx's default proxy buffer, one memory page of
+// 4 KiB or 8 KiB, which also holds the upstream headers pkgwarden relays.
 const maxWarning = 1024
 
 func blockMessage(subject string, v policy.Verdict, requestID string) string {
