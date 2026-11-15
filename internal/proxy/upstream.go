@@ -43,8 +43,9 @@ const DownloadsTimeout = 5 * time.Second
 
 // Upstream fetches from upstream registries. Metadata fetched through Fetch
 // or FetchParsed is cached briefly and concurrent identical requests share
-// one round trip. Artifacts go through Open and are never cached, and
-// neither are POSTs.
+// one round trip. Keep adds what an adapter derived from metadata to the same
+// cache. Artifacts go through Open and are never cached, and neither are
+// POSTs.
 type Upstream struct {
 	client    *http.Client
 	userAgent string
@@ -95,6 +96,19 @@ func FetchParsed[T any](ctx context.Context, u *Upstream, url string, header htt
 		return zero, err
 	}
 	return v.(T), nil
+}
+
+// Keep stores v in the metadata cache under key for the metadata TTL,
+// counting size bytes against the cache's budget. Only Kept returns it.
+func (u *Upstream) Keep(key string, v any, size int64) {
+	u.meta.Set("kept "+key, document{v: v, size: size})
+}
+
+// Kept returns the value that Keep last stored under key, if the cache
+// still holds it.
+func (u *Upstream) Kept(key string) (any, bool) {
+	d, ok := u.meta.Get("kept " + key)
+	return d.v, ok
 }
 
 func (u *Upstream) fetch(ctx context.Context, key, url string, header http.Header, parse func([]byte) (any, int64, error)) (any, error) {

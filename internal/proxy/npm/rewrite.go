@@ -14,11 +14,20 @@ const rewriteBytes = 64 << 20
 // cached packument, which of its releases the policy allows, and where the
 // tarball links point.
 type rewriteKey struct {
-	snap *snapshot
-	// blocked holds the index in snap.pkg.Releases of each blocked release,
-	// as uvarints.
+	snap uint64
+	// blocked holds the index in the snapshot's pkg.Releases of each
+	// blocked release, as uvarints.
 	blocked     string
 	tarballBase string
+}
+
+// keptRewrite is a finished rewrite in the metadata cache. The cache holds
+// one for each package and tarball base, and a request uses it only when
+// the request's own key matches, so a release that leaves its cooldown or
+// gains an advisory gets a new rewrite at once.
+type keptRewrite struct {
+	key rewriteKey
+	res *rewritten
 }
 
 // flight is a rewrite that concurrent requests share. Once every request
@@ -33,7 +42,8 @@ type flight struct {
 }
 
 // rewrite returns the packument in snap rewritten for allowed and
-// tarballBase. Concurrent requests for the same rewrite share one.
+// tarballBase. Concurrent requests for the same rewrite share one, and the
+// metadata cache keeps the result for the requests after them.
 func (r *Registry) rewrite(ctx context.Context, snap *snapshot, allowed func(string) bool, tarballBase string) (*rewritten, error) {
 	var blocked []byte
 	for i, rel := range snap.pkg.Releases {
@@ -41,7 +51,13 @@ func (r *Registry) rewrite(ctx context.Context, snap *snapshot, allowed func(str
 			blocked = binary.AppendUvarint(blocked, uint64(i))
 		}
 	}
-	key := rewriteKey{snap: snap, blocked: string(blocked), tarballBase: tarballBase}
+	key := rewriteKey{snap: snap.id, blocked: string(blocked), tarballBase: tarballBase}
+	keepAs := r.o.Registry + "/" + snap.pkg.Name + " " + tarballBase
+	if v, ok := r.o.HTTP.Kept(keepAs); ok {
+		if k := v.(*keptRewrite); k.key == key {
+			return k.res, nil
+		}
+	}
 
 	r.mu.Lock()
 	f := r.flights[key]
@@ -52,6 +68,9 @@ func (r *Registry) rewrite(ctx context.Context, snap *snapshot, allowed func(str
 		go func() {
 			f.res, f.err = r.runRewrite(fctx, snap.raw, allowed, tarballBase)
 			cancel()
+			if f.err == nil {
+				r.o.HTTP.Keep(keepAs, &keptRewrite{key: key, res: f.res}, f.res.size)
+			}
 			r.mu.Lock()
 			if r.flights[key] == f {
 				delete(r.flights, key)
