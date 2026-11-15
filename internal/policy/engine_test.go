@@ -655,8 +655,6 @@ func TestReassessingAnIndexedPackageCostsTheSameForAnyName(t *testing.T) {
 	}
 }
 
-// BenchmarkAssessIndexed assesses a cached npm package the way each tarball
-// request does. Only the cooldown pass grows with the release count.
 func BenchmarkAssessIndexed(b *testing.B) {
 	for _, n := range []int{300, 4000} {
 		b.Run(fmt.Sprintf("releases=%d", n), func(b *testing.B) {
