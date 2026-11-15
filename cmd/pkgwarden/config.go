@@ -17,6 +17,7 @@ type config struct {
 	listen        string
 	metricsListen string
 	publicURL     string
+	maxInFlight   int
 	metadataTTL   time.Duration
 	metadataBytes int64
 	advisoryTTL   time.Duration
@@ -45,6 +46,7 @@ func parseConfig(args []string) (*config, error) {
 	fs := flag.NewFlagSet("pkgwarden", flag.ContinueOnError)
 	fs.StringVar(&c.listen, "listen", ":8080", "address to listen on")
 	fs.StringVar(&c.metricsListen, "metrics-listen", "", "address of a separate listener that alone serves /metrics (default: /metrics is served on -listen)")
+	fs.IntVar(&c.maxInFlight, "max-in-flight", 8192, "most requests in progress at once; past it, requests get 503 with Retry-After (0 disables the limit)")
 	fs.StringVar(&c.publicURL, "public-url", "", "externally visible base URL, used in rewritten download links (default: derived from each request)")
 	fs.DurationVar(&c.metadataTTL, "metadata-ttl", 5*time.Minute, "how long upstream metadata is cached")
 	fs.Int64Var(&c.metadataBytes, "metadata-cache-bytes", 256<<20, "most bytes of upstream metadata the cache holds (0 disables it)")
@@ -101,6 +103,9 @@ func parseConfig(args []string) (*config, error) {
 	}
 	if c.policy.Cooldown < 0 {
 		return nil, fmt.Errorf("-cooldown must not be negative")
+	}
+	if c.maxInFlight < 0 {
+		return nil, fmt.Errorf("-max-in-flight must not be negative")
 	}
 	return &c, nil
 }

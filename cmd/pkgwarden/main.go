@@ -94,7 +94,7 @@ func run(ctx context.Context, cfg *config) error {
 		HeuristicsBlock: cfg.policy.Heuristics.BlockScore,
 	})
 
-	mainHandler, metricsHandler := handlers(app, cfg.metricsListen != "")
+	mainHandler, metricsHandler := handlers(app, cfg.metricsListen != "", cfg.maxInFlight)
 	type listener struct {
 		addr    string
 		handler http.Handler
@@ -143,8 +143,10 @@ func run(ctx context.Context, cfg *config) error {
 // handlers wraps app for the main listener. With separateMetrics it also
 // returns the handler for the metrics listener, and the main listener
 // leaves /metrics to app, which has no such route. Without it the main
-// listener serves /metrics itself and the second handler is nil.
-func handlers(app http.Handler, separateMetrics bool) (main, metrics http.Handler) {
+// listener serves /metrics itself and the second handler is nil. Requests
+// that reach app past maxInFlight get 503, except /healthz.
+func handlers(app http.Handler, separateMetrics bool, maxInFlight int) (main, metrics http.Handler) {
+	app = limitInFlight(app, maxInFlight)
 	metricsMux := http.NewServeMux()
 	metricsMux.Handle("GET /metrics", telemetry.Handler())
 	if separateMetrics {
@@ -157,4 +159,22 @@ func handlers(app http.Handler, separateMetrics bool) (main, metrics http.Handle
 		}
 		app.ServeHTTP(w, r)
 	})), nil
+}
+
+// limitInFlight lets /healthz through uncounted, so that a liveness probe
+// does not restart an instance that is only busy.
+func limitInFlight(next http.Handler, limit int) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/healthz" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if !telemetry.StartRequest(limit) {
+			w.Header().Set("Retry-After", "1")
+			http.Error(w, "pkgwarden: too many requests in progress, retry later", http.StatusServiceUnavailable)
+			return
+		}
+		defer telemetry.EndRequest()
+		next.ServeHTTP(w, r)
+	})
 }

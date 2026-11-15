@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"runtime/debug"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -42,6 +43,14 @@ var (
 		Namespace: "pkgwarden", Name: "http_request_duration_seconds",
 		Help: "Inbound request latency, by ecosystem.", Buckets: latencyBuckets,
 	}, []string{"ecosystem"})
+	_ = metric.NewGaugeFunc(prometheus.GaugeOpts{
+		Namespace: "pkgwarden", Name: "http_requests_in_flight",
+		Help: "Inbound requests in progress, not counting /healthz and /metrics.",
+	}, func() float64 { return float64(inFlight.Load()) })
+	httpRefused = metric.NewCounter(prometheus.CounterOpts{
+		Namespace: "pkgwarden", Name: "http_requests_refused_total",
+		Help: "Inbound requests answered with 503 because -max-in-flight requests were in progress.",
+	})
 	decisions = metric.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "pkgwarden", Name: "decisions_total",
 		Help: "Policy decisions applied, by ecosystem, stage (metadata or artifact) and decision (allow, warn or block).",
@@ -125,6 +134,27 @@ func init() {
 func Handler() http.Handler {
 	return promhttp.HandlerFor(registry, promhttp.HandlerOpts{})
 }
+
+var inFlight atomic.Int64
+
+// StartRequest counts a request in progress and reports true, unless limit
+// requests already are and limit is above 0. Then it counts a refusal and
+// reports false. The caller calls EndRequest when a counted request ends.
+func StartRequest(limit int) bool {
+	for {
+		n := inFlight.Load()
+		if limit > 0 && n >= int64(limit) {
+			httpRefused.Inc()
+			return false
+		}
+		if inFlight.CompareAndSwap(n, n+1) {
+			return true
+		}
+	}
+}
+
+// EndRequest counts the end of a request that StartRequest counted.
+func EndRequest() { inFlight.Add(-1) }
 
 // RecordDecision counts one policy decision and, once each, the distinct
 // rules behind it.

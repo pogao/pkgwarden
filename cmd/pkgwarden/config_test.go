@@ -183,3 +183,46 @@ func TestLogLevelInvalid(t *testing.T) {
 		}
 	})
 }
+
+func TestMaxInFlightConfig(t *testing.T) {
+	clearEnv(t)
+	tests := []struct {
+		name string
+		env  string
+		args []string
+		want int
+	}{
+		{name: "default", want: 8192},
+		{name: "environment", env: "100", want: 100},
+		{name: "flag wins over the environment", env: "100", args: []string{"-max-in-flight", "0"}, want: 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.env != "" {
+				t.Setenv("PKGWARDEN_MAX_IN_FLIGHT", tt.env)
+			}
+			c, err := parseConfig(tt.args)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if c.maxInFlight != tt.want {
+				t.Errorf("maxInFlight = %d, want %d", c.maxInFlight, tt.want)
+			}
+		})
+	}
+}
+
+func TestMaxInFlightConfigNegative(t *testing.T) {
+	clearEnv(t)
+	t.Run("flag", func(t *testing.T) {
+		if _, err := parseConfig([]string{"-max-in-flight", "-1"}); err == nil {
+			t.Error("parseConfig accepted -max-in-flight -1")
+		}
+	})
+	t.Run("environment", func(t *testing.T) {
+		t.Setenv("PKGWARDEN_MAX_IN_FLIGHT", "-1")
+		if _, err := parseConfig(nil); err == nil {
+			t.Error("parseConfig accepted PKGWARDEN_MAX_IN_FLIGHT=-1")
+		}
+	})
+}
