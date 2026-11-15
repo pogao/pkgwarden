@@ -32,20 +32,22 @@ type Package struct {
 }
 
 // Index derives once what each assessment of p would otherwise derive from
-// p.Releases, so that assessments of p and of copies made from it after
-// this call share it. p.Releases must not change after Index.
-func (p *Package) Index() { p.index = newReleaseIndex(p.Releases) }
+// p's name and releases, so that assessments of p and of copies made from it
+// after this call share it. p.Ecosystem, p.Name and p.Releases must not
+// change after Index.
+func (p *Package) Index() { p.index = newReleaseIndex(p) }
 
 func (p *Package) releaseIndex() *releaseIndex {
 	if p.index != nil {
 		return p.index
 	}
-	return newReleaseIndex(p.Releases)
+	return newReleaseIndex(p)
 }
 
 type releaseIndex struct {
 	releases  []Release
 	published map[string]bool
+	resembles func() (resemblance, bool)
 
 	signalsOnce sync.Once
 	signals     map[string][]signal
@@ -56,9 +58,14 @@ type releaseIndex struct {
 	advisedMap map[string][]Finding
 }
 
-func newReleaseIndex(releases []Release) *releaseIndex {
-	x := &releaseIndex{releases: releases, published: make(map[string]bool, len(releases))}
-	for _, r := range releases {
+func newReleaseIndex(p *Package) *releaseIndex {
+	eco, name := p.Ecosystem, p.Name
+	x := &releaseIndex{
+		releases:  p.Releases,
+		published: make(map[string]bool, len(p.Releases)),
+		resembles: sync.OnceValues(func() (resemblance, bool) { return resembles(eco, name) }),
+	}
+	for _, r := range p.Releases {
 		x.published[r.Version] = true
 	}
 	return x
