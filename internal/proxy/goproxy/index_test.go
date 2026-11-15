@@ -342,6 +342,51 @@ func TestGoIndexBehindJudgesByCommitTime(t *testing.T) {
 	})
 }
 
+func TestGoIndexBehindWarnsOnlyWhenACommitTimeJudges(t *testing.T) {
+	const logrus = "github.com/sirupsen/logrus"
+	dayAgo := time.Now().Add(-24 * time.Hour).UTC()
+	tests := []struct {
+		name     string
+		mod, zip string
+		entries  []string
+		stuck    bool
+		warned   []string
+	}{
+		{"every release has a first-seen time", logrus, "v1.9.3", []string{"v1.0.3", "v1.9.3"}, false, nil},
+		{"every release has a first-seen time, feed stuck", logrus, "v1.9.3", []string{"v1.0.3", "v1.9.3"}, true, nil},
+		{"one release lacks a first-seen time", logrus, "v1.9.3", []string{"v1.9.3"}, false, []string{logrus}},
+		{"releases with no publish time need none", "example.com/gap", "v1.0.0", []string{"v1.0.0"}, false, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			logs := telemetrytest.CaptureLogs(t)
+			fallbacks := telemetrytest.Value(t, "pkgwarden_go_index_fallbacks_total", nil)
+			feed := newFakeIndex()
+			for _, v := range tt.entries {
+				feed.add(tt.mod, v, dayAgo)
+			}
+			var e env
+			if tt.stuck {
+				stuck := time.Now()
+				feed.visible = func(time.Time) time.Time { return stuck }
+				e = newIndexEnv(t, feed)
+			} else {
+				e = setupEnv(t, nil, feed)
+				if err := e.index.Sync(context.Background()); err != nil {
+					t.Fatal(err)
+				}
+				feed.setStatus(http.StatusInternalServerError)
+				if err := e.index.Sync(context.Background()); err == nil {
+					t.Fatal("Sync succeeded against a failing index")
+				}
+			}
+			status, body := get(t, e.proxy.URL+"/go/"+tt.mod+"/@v/"+tt.zip+".zip")
+			assertBlocked(t, status, body, tt.mod+"@"+tt.zip, "first seen upstream", dayAgo.Format(time.RFC3339))
+			assertFallbacks(t, logs, fallbacks, tt.warned...)
+		})
+	}
+}
+
 func TestGoIndexStopEndsEveryWait(t *testing.T) {
 	logs := telemetrytest.CaptureLogs(t)
 	fallbacks := telemetrytest.Value(t, "pkgwarden_go_index_fallbacks_total", nil)

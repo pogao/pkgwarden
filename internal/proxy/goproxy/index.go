@@ -245,19 +245,24 @@ func (ix *Index) stop() {
 }
 
 // proxy.golang.org adds a version to the index when it first serves it, so
-// a .info fetch can be what puts the version there.
+// a .info fetch can be what puts the version there. A release with no
+// publish time is blocked whatever its first-seen time, so only a release
+// with a publish time and no entry is judged by commit time.
 func (ix *Index) firstSeen(ctx context.Context, mod string, rels []policy.Release, fetched time.Time) {
 	covered, state := ix.await(ctx, fetched)
+	byCommitTime := false
 	ix.mu.Lock()
 	for i, r := range rels {
 		if t, ok := ix.seen[mod+"@"+r.Version]; ok {
 			rels[i].FirstSeen = t
+		} else if !r.Published.IsZero() {
+			byCommitTime = true
 		}
 	}
 	newest := ix.newest
 	ix.mu.Unlock()
 	switch {
-	case covered:
+	case covered || !byCommitTime:
 	case state == indexStarting:
 		slog.DebugContext(ctx, "go index behind, judging by commit time", "module", mod)
 	default:
