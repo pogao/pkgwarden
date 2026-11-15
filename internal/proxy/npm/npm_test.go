@@ -581,7 +581,6 @@ func TestPackageWhenDownloadCountsHang(t *testing.T) {
 	}
 }
 
-// changingSource serves advisories that a test replaces between requests.
 type changingSource struct {
 	mu         sync.Mutex
 	advisories []advisory.Advisory
@@ -652,11 +651,12 @@ func TestPackumentFollowsPolicyAndUpstreamChangesAtOnce(t *testing.T) {
 		}
 	}
 
-	// A tarball request caches the packument before any rewrite, so each
-	// rewrite outlives the packument it came from.
-	if resp, body := get(t, srv.URL+"/npm/p/-/p-1.0.0.tgz"); resp.StatusCode != http.StatusOK {
-		t.Fatalf("tarball: status %d: %s", resp.StatusCode, body)
+	cachePackumentBeforeAnyRewrite := func() {
+		if resp, body := get(t, srv.URL+"/npm/p/-/p-1.0.0.tgz"); resp.StatusCode != http.StatusOK {
+			t.Fatalf("tarball: status %d: %s", resp.StatusCode, body)
+		}
 	}
+	cachePackumentBeforeAnyRewrite()
 	check("in cooldown", "1.0.0")
 	time.Sleep(time.Until(ripens.Add(300 * time.Millisecond)))
 	check("out of cooldown", "1.0.0", "1.1.0")

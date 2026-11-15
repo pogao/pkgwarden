@@ -21,9 +21,7 @@ import (
 // document, which filtering parses and rewrites, and the facts a policy
 // check needs, parsed once.
 type snapshot struct {
-	// id tells this snapshot apart from every other, including a later
-	// fetch of the same packument.
-	id  uint64
+	id  snapshotID
 	raw []byte
 	// pkg has no WeeklyDownloads, which come from another document.
 	pkg policy.Package
@@ -31,7 +29,11 @@ type snapshot struct {
 	files map[string]string
 }
 
-var snapshots atomic.Uint64
+// snapshotID names one snapshot without keeping it reachable, so a kept
+// rewrite does not hold its upstream document after the cache drops it.
+type snapshotID uint64
+
+var lastSnapshotID atomic.Uint64
 
 // releaseOverhead approximates the memory a release takes in a snapshot
 // besides its version string.
@@ -69,7 +71,7 @@ func parseSnapshot(name string, raw []byte) (*snapshot, int64, error) {
 		maintainers = append(maintainers, m.Name)
 	}
 	s := &snapshot{
-		id:    snapshots.Add(1),
+		id:    snapshotID(lastSnapshotID.Add(1)),
 		raw:   raw,
 		pkg:   policy.Package{Ecosystem: ecosystem.Npm, Name: name, Created: published("created")},
 		files: make(map[string]string, len(doc.Versions)),
@@ -165,8 +167,7 @@ type rewritten struct {
 	upstreamTags map[string]string
 	ok           bool
 	latest       string
-	// size approximates the bytes rw holds once manifest has indexed body.
-	size int64
+	size         int64
 
 	indexManifests sync.Once
 	manifests      map[string]json.RawMessage

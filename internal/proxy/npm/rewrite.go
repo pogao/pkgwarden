@@ -14,7 +14,7 @@ const rewriteBytes = 64 << 20
 // cached packument, which of its releases the policy allows, and where the
 // tarball links point.
 type rewriteKey struct {
-	snap uint64
+	snap snapshotID
 	// blocked holds the index in the snapshot's pkg.Releases of each
 	// blocked release, as uvarints.
 	blocked     string

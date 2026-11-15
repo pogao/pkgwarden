@@ -114,8 +114,7 @@ func releasesProxy(t *testing.T, n, pad int, src fakeSource) (*httptest.Server, 
 // together serves srv's handler at a new URL where each of the first n
 // requests waits until all n have arrived. Without it, a request whose
 // connection opens late on a loaded machine can reach the proxy after the
-// shared rewrite has ended, and then does a rewrite of its own. A request
-// sent there with srv's Host gets the tarball links srv itself serves.
+// shared rewrite has ended, and then does a rewrite of its own.
 func together(t *testing.T, srv *httptest.Server, n int) string {
 	t.Helper()
 	var arrived sync.WaitGroup
@@ -180,8 +179,11 @@ func send(url, host string, w io.Writer) (int, error) {
 	return resp.StatusCode, err
 }
 
-// Each test below that needs a rewrite to happen sends its requests under a
-// Host that no earlier request used, so no kept rewrite answers them.
+var hostsUsed atomic.Int32
+
+// unusedHost returns a Host header that no earlier request sent, so no kept
+// rewrite answers a request that sends it.
+func unusedHost() string { return fmt.Sprintf("host%d.example", hostsUsed.Add(1)) }
 
 func TestConcurrentPackumentRequestsShareOneRewrite(t *testing.T) {
 	srv, _ := bigProxy(t, 8<<10)
@@ -189,17 +191,17 @@ func TestConcurrentPackumentRequestsShareOneRewrite(t *testing.T) {
 	if code, err := send(packument, "", io.Discard); err != nil || code != http.StatusOK {
 		t.Fatalf("first packument request: status %d, error %v", code, err)
 	}
-	one := bytesAllocated(func() { send(packument, "lone.example", io.Discard) })
+	one := bytesAllocated(func() { send(packument, unusedHost(), io.Discard) })
 
 	const n = 16
-	burst := together(t, srv, n) + "/npm/big"
+	burst, host := together(t, srv, n)+"/npm/big", unusedHost()
 	sums := make([][]byte, n)
 	allocated := bytesAllocated(func() {
 		var wg sync.WaitGroup
 		for i := range n {
 			wg.Go(func() {
 				h := sha256.New()
-				if code, err := send(burst, "burst.example", h); err != nil || code != http.StatusOK {
+				if code, err := send(burst, host, h); err != nil || code != http.StatusOK {
 					t.Errorf("status %d, error %v, want 200", code, err)
 				}
 				sums[i] = h.Sum(nil)
@@ -209,7 +211,7 @@ func TestConcurrentPackumentRequestsShareOneRewrite(t *testing.T) {
 	})
 
 	later := sha256.New()
-	send(packument, "burst.example", later)
+	send(packument, host, later)
 	for i, sum := range sums {
 		if !bytes.Equal(sum, later.Sum(nil)) {
 			t.Errorf("concurrent response %d differs from a later request's", i)
@@ -253,15 +255,15 @@ func TestConcurrentManifestRequestsDoNotEachParseThePackument(t *testing.T) {
 	if code, err := send(manifest, "", io.Discard); err != nil || code != http.StatusOK {
 		t.Fatalf("first manifest request: status %d, error %v", code, err)
 	}
-	one := bytesAllocated(func() { send(manifest, "lone.example", io.Discard) })
+	one := bytesAllocated(func() { send(manifest, unusedHost(), io.Discard) })
 
 	const n = 16
-	burst := together(t, srv, n) + "/npm/big/1.7.0"
+	burst, host := together(t, srv, n)+"/npm/big/1.7.0", unusedHost()
 	allocated := bytesAllocated(func() {
 		var wg sync.WaitGroup
 		for range n {
 			wg.Go(func() {
-				if code, err := send(burst, "burst.example", io.Discard); err != nil || code != http.StatusOK {
+				if code, err := send(burst, host, io.Discard); err != nil || code != http.StatusOK {
 					t.Errorf("status %d, error %v, want 200", code, err)
 				}
 			})
@@ -321,13 +323,14 @@ func heldWhileWaiting(t *testing.T, releases, n int) uint64 {
 	if code, err := send(packument, "", io.Discard); err != nil || code != http.StatusOK {
 		t.Fatalf("first packument request: status %d, error %v", code, err)
 	}
+	host := unusedHost()
 	release := reg.HoldRewrites()
 	before := heapAlloc()
 	var wg sync.WaitGroup
 	var failed atomic.Int32
 	for range n {
 		wg.Go(func() {
-			if code, err := send(packument, "burst.example", io.Discard); err != nil || code != http.StatusOK {
+			if code, err := send(packument, host, io.Discard); err != nil || code != http.StatusOK {
 				failed.Add(1)
 				t.Errorf("status %d, error %v, want 200", code, err)
 			}
