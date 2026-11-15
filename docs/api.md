@@ -141,7 +141,7 @@ pkgwarden adds these headers to every response that went through the policy. Tho
 | `X-Pkgwarden-Decision` | `allow`, `warn`, or `block`. On a metadata document it is the package verdict. On a file it is the release verdict. |
 | `X-Pkgwarden-Warning` | Sent only when the decision is `warn`. It lists the `warn` findings as `<rule>: <reason>`, separated by `; `, in at most 1,024 bytes of printable ASCII. |
 
-pkgwarden keeps the warning header short, because clients and proxies reject a long one, and the download then fails with an error that does not mention pkgwarden. Node refuses more than 16 KiB of response headers, Python's `http.client` refuses a header line over 64 KiB, and nginx answers 502 when the upstream headers pass its default 4 KiB `proxy_buffer_size`.
+pkgwarden keeps the warning header short, because clients and proxies reject a long one, and the download then fails with an error that does not mention pkgwarden. Node refuses more than 16 KiB of response headers, Python's `http.client` refuses a header line over 64 KiB, and nginx answers 502 when the upstream headers pass its `proxy_buffer_size`. That buffer defaults to one memory page, which is 4 KiB or 8 KiB depending on the platform.
 
 - Each `<rule>: <reason>` part longer than 160 bytes is cut to 157 bytes and ends with `...`.
 - When the next part would take the header past 964 bytes, pkgwarden stops and appends `and <N> more, see /api/v1/check`. N counts the `warn` findings not yet listed.
