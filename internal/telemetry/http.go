@@ -1,6 +1,7 @@
 package telemetry
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -21,14 +22,12 @@ func Middleware(next http.Handler) http.Handler {
 		id := requestID(r.Header.Get(requestIDHeader))
 		w.Header().Set(requestIDHeader, id)
 		ctx := WithRequestID(r.Context(), id)
-		rec := &recorder{ResponseWriter: w}
+		rec := &recorder{ResponseWriter: w, clientCtx: r.Context()}
 		next.ServeHTTP(rec, r.WithContext(ctx))
 
 		d := time.Since(start)
+		rec.note(http.StatusOK)
 		status := rec.status
-		if status == 0 {
-			status = http.StatusOK
-		}
 		eco := routeEcosystem(r.URL.Path)
 		httpRequests.WithLabelValues(eco, methodLabel(r.Method), strconv.Itoa(status)).Inc()
 		httpDuration.WithLabelValues(eco).Observe(d.Seconds())
@@ -53,24 +52,33 @@ func Middleware(next http.Handler) http.Handler {
 	})
 }
 
+const statusClientClosedRequest = 499
+
 // recorder notes the status and size of a response.
 type recorder struct {
 	http.ResponseWriter
-	status int
-	bytes  int64
+	clientCtx context.Context
+	status    int
+	bytes     int64
+}
+
+func (r *recorder) note(code int) {
+	if r.status != 0 {
+		return
+	}
+	if r.clientCtx.Err() != nil {
+		code = statusClientClosedRequest
+	}
+	r.status = code
 }
 
 func (r *recorder) WriteHeader(code int) {
-	if r.status == 0 {
-		r.status = code
-	}
+	r.note(code)
 	r.ResponseWriter.WriteHeader(code)
 }
 
 func (r *recorder) Write(b []byte) (int, error) {
-	if r.status == 0 {
-		r.status = http.StatusOK
-	}
+	r.note(http.StatusOK)
 	n, err := r.ResponseWriter.Write(b)
 	r.bytes += int64(n)
 	return n, err
