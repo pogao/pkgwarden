@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"slices"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -14,6 +16,26 @@ import (
 
 func ghsaServer(t *testing.T, token string, handle func(w http.ResponseWriter, r *http.Request)) *GHSA {
 	t.Helper()
+	return ghsaServerWithNpm(t, token, nil, handle)
+}
+
+// ghsaServerWithNpm is ghsaServer with a fake registry.npmjs.org, which
+// answers a request for a name in npm with its status and fails the test
+// for any other name.
+func ghsaServerWithNpm(t *testing.T, token string, npm map[string]int, handle func(w http.ResponseWriter, r *http.Request)) *GHSA {
+	t.Helper()
+	registry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "" {
+			t.Errorf("registry request %s carries the GitHub token", r.URL.Path)
+		}
+		status, ok := npm[strings.TrimPrefix(r.URL.Path, "/")]
+		if !ok {
+			t.Errorf("unexpected registry request %s %s", r.Method, r.URL.Path)
+			status = http.StatusNotFound
+		}
+		w.WriteHeader(status)
+	}))
+	t.Cleanup(registry.Close)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/advisories" {
 			http.NotFound(w, r)
@@ -38,7 +60,24 @@ func ghsaServer(t *testing.T, token string, handle func(w http.ResponseWriter, r
 		handle(w, r)
 	}))
 	t.Cleanup(srv.Close)
-	return NewGHSA(srv.Client(), srv.URL, token)
+	to, _ := url.Parse(registry.URL)
+	client := srv.Client()
+	client.Transport = npmRoute{to: to, next: client.Transport}
+	return NewGHSA(client, srv.URL, token)
+}
+
+// npmRoute sends requests for registry.npmjs.org to the fake registry at to.
+type npmRoute struct {
+	to   *url.URL
+	next http.RoundTripper
+}
+
+func (n npmRoute) RoundTrip(r *http.Request) (*http.Response, error) {
+	if r.URL.Host == "registry.npmjs.org" {
+		r = r.Clone(r.Context())
+		r.URL.Scheme, r.URL.Host = n.to.Scheme, n.to.Host
+	}
+	return n.next.RoundTrip(r)
 }
 
 func TestGHSALookupNpm(t *testing.T) {
@@ -125,16 +164,50 @@ func TestGHSAVulnerableVersionRange(t *testing.T) {
 }
 
 func TestGHSAMatchesNpmNamesExactly(t *testing.T) {
-	src := ghsaServer(t, "", func(w http.ResponseWriter, r *http.Request) {
+	src := ghsaServerWithNpm(t, "", map[string]int{"jquery": http.StatusOK}, func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`[{"ghsa_id":"GHSA-case-0000-0000","type":"reviewed","severity":"high","withdrawn_at":null,
 		 "vulnerabilities":[{"package":{"ecosystem":"npm","name":"jQuery"},"vulnerable_version_range":"= 1.0.0"},
-		 {"package":{"ecosystem":"npm","name":"jquery"},"vulnerable_version_range":"= 3.4.1"}]}]`))
+		 {"package":{"ecosystem":"npm","name":"jquery"},"vulnerable_version_range":"= 3.4.1"}]},
+		{"ghsa_id":"GHSA-case-1111-1111","type":"reviewed","severity":"high","withdrawn_at":null,
+		 "vulnerabilities":[{"package":{"ecosystem":"npm","name":"jquery"},"vulnerable_version_range":"< 3.5.0"}]}]`))
 	})
 	advs, err := src.Lookup(context.Background(), ecosystem.Npm, "jQuery")
 	if err != nil {
 		t.Fatal(err)
 	}
+	if len(advs) != 1 {
+		t.Fatalf("got %+v, want only GHSA-case-0000-0000", advs)
+	}
 	checkAffects(t, byID(t, advs, "GHSA-case-0000-0000"), []string{"1.0.0"}, []string{"3.4.1"})
+}
+
+func TestGHSAMatchesMisfiledNpmName(t *testing.T) {
+	npm := map[string]int{"Openclaw": http.StatusNotFound, "OpenClaw": http.StatusNotFound}
+	src := ghsaServerWithNpm(t, "secret", npm, func(w http.ResponseWriter, r *http.Request) {
+		w.Write(fixture(t, "ghsa_openclaw.json"))
+	})
+	advs, err := src.Lookup(context.Background(), ecosystem.Npm, "openclaw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(advs) != 2 {
+		t.Fatalf("got %d advisories, want 2 (GHSA-vm29-7mq3-9jrg is withdrawn)", len(advs))
+	}
+	checkAffects(t, byID(t, advs, "GHSA-2j8v-hwgc-x698"), []string{"2026.5.12", "2026.5.16"}, []string{"2026.5.17"})
+	checkAffects(t, byID(t, advs, "GHSA-3x84-qq85-fj65"), []string{"2026.6.5"}, []string{"2026.6.6"})
+}
+
+func TestGHSAMisfiledNpmNameMatchesWhenRegistryFails(t *testing.T) {
+	npm := map[string]int{"Openclaw": http.StatusServiceUnavailable, "OpenClaw": http.StatusServiceUnavailable}
+	src := ghsaServerWithNpm(t, "", npm, func(w http.ResponseWriter, r *http.Request) {
+		w.Write(fixture(t, "ghsa_openclaw.json"))
+	})
+	advs, err := src.Lookup(context.Background(), ecosystem.Npm, "openclaw")
+	if err == nil {
+		t.Error("Lookup succeeded although the registry could not say whether Openclaw exists, want an error")
+	}
+	checkAffects(t, byID(t, advs, "GHSA-2j8v-hwgc-x698"), []string{"2026.5.12"}, []string{"2026.5.17"})
+	byID(t, advs, "GHSA-3x84-qq85-fj65")
 }
 
 func TestGHSAKindsAndWithdrawn(t *testing.T) {
