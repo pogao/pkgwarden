@@ -44,11 +44,10 @@ func largePackument(t *testing.T, registry string, n, pad int) []byte {
 	return b
 }
 
-// bytesAllocated returns the bytes allocated while f runs. Meanwhile it
-// runs one P with the garbage collector off, so a rewrite's second large
-// JSON encode always gets the buffer its first one grew from sync.Pool.
-// A collection empties the pool, and an item put on one P is hidden from
-// the others. A rewrite that misses the buffer allocates about 100 MB more.
+// One P and no collection keep a rewrite's second large JSON encode on the
+// sync.Pool buffer its first one grew. A collection empties the pool, and an
+// item put on one P is hidden from the others. A rewrite that misses the
+// buffer allocates about 100 MB more.
 func bytesAllocated(f func()) uint64 {
 	defer runtime.GOMAXPROCS(runtime.GOMAXPROCS(1))
 	defer debug.SetGCPercent(debug.SetGCPercent(-1))
