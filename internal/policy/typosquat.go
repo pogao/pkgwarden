@@ -74,22 +74,17 @@ type resemblance struct {
 	how     string
 }
 
-// popularKey is the form a name takes on the popular list. npm names are
-// case-sensitive, but npm no longer accepts new names with capital letters,
-// so a case variant of a listed name is a legacy package such as jQuery, not
-// a typosquat.
 func popularKey(eco ecosystem.Ecosystem, name string) string {
-	if eco == ecosystem.Npm {
-		return strings.ToLower(name)
-	}
-	return eco.Normalize(name)
+	return strings.ToLower(eco.Normalize(name))
 }
 
 // resembles reports whether name imitates a popular package of eco without
 // being one. A name differing from a popular one only in letter case is not
-// reported: npm accepts no new mixed-case names, PyPI and Cargo fold case in
-// Normalize, and Go module hosts such as GitHub resolve case variants to the
-// same repository.
+// reported. npm accepts no new mixed-case names, and rubygems.org has rejected
+// a new name that matches an existing one apart from case since 2016, so a
+// variant such as jQuery or Rack is a legacy package. PyPI and Cargo fold case
+// in Normalize, and Go module hosts such as GitHub resolve case variants to
+// the same repository.
 func resembles(eco ecosystem.Ecosystem, name string) (resemblance, bool) {
 	idx := popularIndexes()[eco]
 	if idx == nil {
@@ -110,7 +105,7 @@ func resembles(eco ecosystem.Ecosystem, name string) (resemblance, bool) {
 
 func splitName(name string) []element {
 	var out []element
-	for s := range strings.SplitSeq(strings.ToLower(name), "/") {
+	for s := range strings.SplitSeq(name, "/") {
 		out = append(out, newElement(s))
 	}
 	return out

@@ -56,7 +56,12 @@ func TestTyposquat(t *testing.T) {
 
 		{ecosystem.RubyGems, "rai1s", `"rails" (differs only by look-alike characters)`},
 		{ecosystem.RubyGems, "nokogirl", `"nokogiri" (one edit away)`},
+		{ecosystem.RubyGems, "rakc", `"rake" (one edit away)`},
+		{ecosystem.RubyGems, "Nokogirl", `"nokogiri" (one edit away)`},
 		{ecosystem.RubyGems, "rails", ""},
+		{ecosystem.RubyGems, "Rack", ""},
+		{ecosystem.RubyGems, "Sassc", ""},
+		{ecosystem.RubyGems, "Bootsnap", ""},
 
 		{ecosystem.Cargo, "tokoi", `"tokio" (one edit away)`},
 		{ecosystem.Cargo, "serdejson", `"serde_json" (differs only in separators)`},
@@ -66,7 +71,12 @@ func TestTyposquat(t *testing.T) {
 		{ecosystem.Go, "github.com/slrupsen/logrus", `"github.com/sirupsen/logrus" (one edit away)`},
 		{ecosystem.Go, "githuh.com/stretchr/testify", `"github.com/stretchr/testify" (one edit away)`},
 		{ecosystem.Go, "golang.org/x/crypt0", `"golang.org/x/crypto" (differs only by look-alike characters)`},
+		{ecosystem.Go, "github.com/tidwall/gjsom", `"github.com/tidwall/gjson" (one edit away)`},
+		{ecosystem.Go, "github.com/Tidwall/gjsom", `"github.com/tidwall/gjson" (one edit away)`},
 		{ecosystem.Go, "github.com/Sirupsen/logrus", ""},
+		{ecosystem.Go, "github.com/Tidwall/gjson", ""},
+		{ecosystem.Go, "github.com/tidwall/GJSON", ""},
+		{ecosystem.Go, "Gopkg.in/yaml.v3", ""},
 		{ecosystem.Go, "github.com/go-redis/redis/v9", ""},
 		{ecosystem.Go, "github.com/sirupsen/logrus/v2", ""},
 		{ecosystem.Go, "golang.org/x/nett", ""},
@@ -101,13 +111,14 @@ func TestPopularNamesAreNotTyposquats(t *testing.T) {
 	}
 }
 
-// npm no longer accepts new names with capital letters, so a case variant of
-// a listed name is a legacy package, not a typosquat.
-func TestNpmCaseVariantsOfPopularNamesAreNotTyposquats(t *testing.T) {
-	for _, name := range readPopular(t, ecosystem.Npm) {
-		upper := strings.ToUpper(name)
-		if reason, flagged := typosquatFinding(ecosystem.Npm, upper); flagged {
-			t.Errorf("case variant %q flagged: %s", upper, reason)
+func TestCaseVariantsOfPopularNamesAreNotTyposquats(t *testing.T) {
+	for _, eco := range ecosystem.All() {
+		for _, name := range readPopular(t, eco) {
+			for _, variant := range []string{strings.ToUpper(name[:1]) + name[1:], strings.ToUpper(name)} {
+				if reason, flagged := typosquatFinding(eco, variant); flagged {
+					t.Errorf("%s: case variant %q flagged: %s", eco, variant, reason)
+				}
+			}
 		}
 	}
 }

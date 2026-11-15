@@ -144,9 +144,9 @@ The lists are static. They change only when someone edits them and builds a new 
 
 pkgwarden compares a name with the list in these steps:
 
-1. It normalizes the name the way the registry does. Cargo folds case and treats `_` as `-`. PyPI applies PEP 503, which folds case and turns runs of `-`, `_`, and `.` into one `-`. RubyGems and Go names stay as they are. npm names are case-sensitive, but this check lower-cases them.
-2. If the normalized name is on the list, the check stops. A listed package is never a typosquat.
-3. It lower-cases the name and splits it on `/` into elements. An npm scoped name such as `@babel/core` has two elements. A Go module path such as `github.com/sirupsen/logrus` has three. Every other name has one.
+1. It normalizes the name the way the registry does, then lower-cases it. Cargo treats `_` as `-`. PyPI applies PEP 503, which turns runs of `-`, `_`, and `.` into one `-`. npm, RubyGems, and Go names change only in case.
+2. If the result is on the list, the check stops. A listed package is never a typosquat, and neither is a name that differs from one only in letter case.
+3. It splits the name on `/` into elements. An npm scoped name such as `@babel/core` has two elements. A Go module path such as `github.com/sirupsen/logrus` has three. Every other name has one.
 4. It compares the name with each listed name that has the same number of elements. Exactly one element must differ.
 5. It tests the differing element against the listed element. The first rule that matches decides, and the first listed name that matches wins.
 
@@ -167,7 +167,7 @@ Because only one element may differ, a Go typosquat is judged by the length of t
 
 The comparison leaves out these cases on purpose. Each one is a case in `TestTyposquat` in `internal/policy/typosquat_test.go`.
 
-- A name that differs from a listed name only in letter case, such as `LoDash` or `github.com/Sirupsen/logrus`. npm no longer accepts new names with capital letters, so a mixed-case npm name such as `jQuery` is a legacy package. PyPI and Cargo fold case, and GitHub resolves case variants to the same repository.
+- A name that differs from a listed name only in letter case, such as `LoDash`, `Rack`, or `github.com/Sirupsen/logrus`. `TestCaseVariantsOfPopularNamesAreNotTyposquats` checks the capitalized and all-caps form of every listed name. npm no longer accepts new names with capital letters, so a mixed-case npm name such as `jQuery` is a legacy package. Since July 2016, rubygems.org has rejected a new gem whose name matches an existing gem's name apart from case. So a gem such as `Rack`, last published in 2010, is a legacy package too. PyPI and Cargo fold case, and GitHub resolves case variants to the same repository.
 - A name the registry treats as the same package, such as `python_dateutil` for `python-dateutil` on PyPI or `serde-json` for `serde_json` on Cargo.
 - A name with a different number of elements. The npm package `user-event` is not compared with `@testing-library/user-event`, and `github.com/sirupsen/logrus/v2` is not compared with `github.com/sirupsen/logrus`.
 - An edit to an element shorter than 4 characters, such as `mss` or the `v9` in `github.com/go-redis/redis/v9`. Separator and look-alike changes still count for short elements.
