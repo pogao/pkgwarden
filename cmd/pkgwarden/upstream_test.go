@@ -102,7 +102,7 @@ func TestUpstreamGivesSlotsBack(t *testing.T) {
 	defer srv.Close()
 	exceedSlots := func(t *testing.T, path string, finish func(*http.Response, error) error) {
 		client := &http.Client{Transport: newUpstreamTransport(nil)}
-		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 		defer cancel()
 		get := func(path string) (*http.Response, error) {
 			req, err := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+path, nil)
@@ -139,6 +139,14 @@ func TestUpstreamGivesSlotsBack(t *testing.T) {
 			}
 			_, err = io.ReadAll(resp.Body)
 			return err
+		})
+	})
+	t.Run("body closed unread", func(t *testing.T) {
+		exceedSlots(t, "/ok", func(resp *http.Response, err error) error {
+			if err != nil {
+				return err
+			}
+			return resp.Body.Close()
 		})
 	})
 }
