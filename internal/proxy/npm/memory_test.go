@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"runtime"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"testing"
@@ -43,7 +44,14 @@ func largePackument(t *testing.T, registry string, n, pad int) []byte {
 	return b
 }
 
+// bytesAllocated returns the bytes allocated while f runs. Meanwhile it
+// runs one P with the garbage collector off, so a rewrite's second large
+// JSON encode always gets the buffer its first one grew from sync.Pool.
+// A collection empties the pool, and an item put on one P is hidden from
+// the others. A rewrite that misses the buffer allocates about 100 MB more.
 func bytesAllocated(f func()) uint64 {
+	defer runtime.GOMAXPROCS(runtime.GOMAXPROCS(1))
+	defer debug.SetGCPercent(debug.SetGCPercent(-1))
 	var before, after runtime.MemStats
 	runtime.ReadMemStats(&before)
 	f()
@@ -62,10 +70,9 @@ func skipAllocationBudgetUnderRace(t *testing.T) {
 	}
 }
 
-// bigProxy returns the URL of a proxy whose upstream serves a
-// largePackument of 2000 releases with pad bytes each as package big, and
-// that packument.
-func bigProxy(t *testing.T, pad int) (string, []byte) {
+// bigProxy returns a proxy whose upstream serves a largePackument of 2000
+// releases with pad bytes each as package big, and that packument.
+func bigProxy(t *testing.T, pad int) (*httptest.Server, []byte) {
 	t.Helper()
 	var doc []byte
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -89,12 +96,30 @@ func bigProxy(t *testing.T, pad int) (string, []byte) {
 	})
 	srv := httptest.NewServer(proxy.NewServer(engine, reg))
 	t.Cleanup(srv.Close)
-	return srv.URL, doc
+	return srv, doc
+}
+
+// together serves srv's handler at a new URL where each of the first n
+// requests waits until all n have arrived. Without it, a request whose
+// connection opens late on a loaded machine can reach the proxy after the
+// shared rewrite has ended, and then does a rewrite of its own. A request
+// sent there with srv's Host gets the tarball links srv itself serves.
+func together(t *testing.T, srv *httptest.Server, n int) string {
+	t.Helper()
+	var arrived sync.WaitGroup
+	arrived.Add(n)
+	burst := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		arrived.Done()
+		arrived.Wait()
+		srv.Config.Handler.ServeHTTP(w, r)
+	}))
+	t.Cleanup(burst.Close)
+	return burst.URL
 }
 
 func TestConcurrentTarballRequestsDoNotMultiplyPackumentMemory(t *testing.T) {
-	proxyURL, doc := bigProxy(t, 8<<10)
-	tarball := proxyURL + "/npm/big/-/big-1.7.0.tgz"
+	srv, doc := bigProxy(t, 8<<10)
+	tarball := srv.URL + "/npm/big/-/big-1.7.0.tgz"
 	if resp, body := get(t, tarball); resp.StatusCode != http.StatusOK {
 		t.Fatalf("first tarball request: status %d body %s", resp.StatusCode, body)
 	}
@@ -144,8 +169,8 @@ func send(url, host string, w io.Writer) (int, error) {
 }
 
 func TestConcurrentPackumentRequestsShareOneRewrite(t *testing.T) {
-	proxyURL, _ := bigProxy(t, 8<<10)
-	packument := proxyURL + "/npm/big"
+	srv, _ := bigProxy(t, 8<<10)
+	packument := srv.URL + "/npm/big"
 	if code, err := send(packument, "", io.Discard); err != nil || code != http.StatusOK {
 		t.Fatalf("first packument request: status %d, error %v", code, err)
 	}
@@ -153,13 +178,14 @@ func TestConcurrentPackumentRequestsShareOneRewrite(t *testing.T) {
 	one := bytesAllocated(func() { send(packument, "", lone) })
 
 	const n = 16
+	burst := together(t, srv, n) + "/npm/big"
 	sums := make([][]byte, n)
 	allocated := bytesAllocated(func() {
 		var wg sync.WaitGroup
 		for i := range n {
 			wg.Go(func() {
 				h := sha256.New()
-				if code, err := send(packument, "", h); err != nil || code != http.StatusOK {
+				if code, err := send(burst, srv.Listener.Addr().String(), h); err != nil || code != http.StatusOK {
 					t.Errorf("status %d, error %v, want 200", code, err)
 				}
 				sums[i] = h.Sum(nil)
@@ -181,19 +207,20 @@ func TestConcurrentPackumentRequestsShareOneRewrite(t *testing.T) {
 }
 
 func TestConcurrentManifestRequestsDoNotEachParseThePackument(t *testing.T) {
-	proxyURL, doc := bigProxy(t, 8<<10)
-	manifest := proxyURL + "/npm/big/1.7.0"
+	srv, doc := bigProxy(t, 8<<10)
+	manifest := srv.URL + "/npm/big/1.7.0"
 	if code, err := send(manifest, "", io.Discard); err != nil || code != http.StatusOK {
 		t.Fatalf("first manifest request: status %d, error %v", code, err)
 	}
 	one := bytesAllocated(func() { send(manifest, "", io.Discard) })
 
 	const n = 16
+	burst := together(t, srv, n) + "/npm/big/1.7.0"
 	allocated := bytesAllocated(func() {
 		var wg sync.WaitGroup
 		for range n {
 			wg.Go(func() {
-				if code, err := send(manifest, "", io.Discard); err != nil || code != http.StatusOK {
+				if code, err := send(burst, srv.Listener.Addr().String(), io.Discard); err != nil || code != http.StatusOK {
 					t.Errorf("status %d, error %v, want 200", code, err)
 				}
 			})
@@ -209,8 +236,8 @@ func TestConcurrentManifestRequestsDoNotEachParseThePackument(t *testing.T) {
 }
 
 func TestConcurrentPackumentRequestsKeepTheirOwnTarballLinks(t *testing.T) {
-	proxyURL, _ := bigProxy(t, 1<<10)
-	packument := proxyURL + "/npm/big"
+	srv, _ := bigProxy(t, 1<<10)
+	packument := srv.URL + "/npm/big"
 	hosts := []string{"a.example", "b.example"}
 	var wg sync.WaitGroup
 	for i := range 16 {
