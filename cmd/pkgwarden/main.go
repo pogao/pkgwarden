@@ -162,7 +162,9 @@ func handlers(app http.Handler, separateMetrics bool, maxInFlight int) (main, me
 }
 
 // limitInFlight lets /healthz through uncounted, so that a liveness probe
-// does not restart an instance that is only busy.
+// does not restart an instance that is only busy. A refused request closes
+// its connection, because an idle connection costs memory too, and the
+// clients being refused can outnumber the requests in progress.
 func limitInFlight(next http.Handler, limit int) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/healthz" {
@@ -171,6 +173,7 @@ func limitInFlight(next http.Handler, limit int) http.Handler {
 		}
 		if !telemetry.StartRequest(limit) {
 			w.Header().Set("Retry-After", "1")
+			w.Header().Set("Connection", "close")
 			http.Error(w, "pkgwarden: too many requests in progress, retry later", http.StatusServiceUnavailable)
 			return
 		}

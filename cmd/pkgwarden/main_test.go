@@ -124,6 +124,9 @@ func TestMaxInFlightLimit(t *testing.T) {
 		if got := rec.Header().Get("Retry-After"); got != "1" {
 			t.Errorf("Retry-After = %q, want 1", got)
 		}
+		if got := rec.Header().Get("Connection"); got != "close" {
+			t.Errorf("Connection = %q, want close", got)
+		}
 		if rec.Header().Get("X-Request-Id") == "" {
 			t.Error("the 503 has no X-Request-Id")
 		}
