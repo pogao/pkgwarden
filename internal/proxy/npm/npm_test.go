@@ -467,7 +467,7 @@ func TestPassthrough(t *testing.T) {
 		t.Errorf("search: status %d body %s", resp.StatusCode, body)
 	}
 
-	for _, path := range []string{"/-/npm/v1/security/advisories/bulk", "/-/npm/v1/security/audits/quick"} {
+	for _, path := range []string{"/-/npm/v1/security/advisories/bulk", "/-/npm/v1/security/audits", "/-/npm/v1/security/audits/quick"} {
 		resp, err := http.Post(e.proxy.URL+"/npm"+path, "application/json", strings.NewReader(`{"left-pad":["1.0.0"]}`))
 		if err != nil {
 			t.Fatal(err)
