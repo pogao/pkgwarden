@@ -97,6 +97,7 @@ Error bodies are plain text.
 | 400 | `unknown ecosystem "maven"` | `ecosystem` is missing or not one of the five. |
 | 400 | `ecosystem not enabled or name missing` | `name` is missing. |
 | 404 | `not found` | The upstream registry has no such package. |
+| 499 | None | The client closed the connection before pkgwarden answered. The client never receives this status. It appears only in the request log and the metrics. |
 | 502 | `upstream error: <error>` | The upstream registry failed or answered with an unexpected status. |
 
 A failed advisory lookup is not an error. It is an `advisory-lookup` finding in a 200 response.

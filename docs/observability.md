@@ -14,7 +14,7 @@ Every pkgwarden series starts with `pkgwarden_`. No metric has a package name or
 
 | Metric | Type | Labels | Meaning |
 | --- | --- | --- | --- |
-| `pkgwarden_http_requests_total` | counter | `ecosystem`, `method`, `code` | Inbound requests that pkgwarden answered. |
+| `pkgwarden_http_requests_total` | counter | `ecosystem`, `method`, `code` | Inbound requests that pkgwarden finished. |
 | `pkgwarden_http_request_duration_seconds` | histogram | `ecosystem` | Time from the request's arrival until pkgwarden finished the response. |
 | `pkgwarden_decisions_total` | counter | `ecosystem`, `stage`, `decision` | Policy verdicts that pkgwarden applied to a response. |
 | `pkgwarden_findings_total` | counter | `ecosystem`, `stage`, `rule`, `decision` | Rules behind each `warn` or `block` verdict. |
@@ -43,7 +43,7 @@ The histograms use these bucket bounds in seconds: 0.005, 0.01, 0.025, 0.05, 0.1
 | `ecosystem` on `http_` metrics | `npm`, `pypi`, `rubygems`, `go`, or `cargo` for the adapter routes, `api` for `/api/`, and `other` for every other path, including `/healthz` and `/metrics`. |
 | `ecosystem` on the other metrics | `npm`, `pypi`, `rubygems`, `go`, or `cargo`. |
 | `method` | `GET`, `HEAD`, `POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS`, `CONNECT`, or `TRACE`. Any other method is `other`. |
-| `code` on `http_requests_total` | The response status, such as `200` or `403`. |
+| `code` on `http_requests_total` | The response status, such as `200` or `403`, or `499` when the client closed the connection before pkgwarden answered. |
 | `code` on `upstream_requests_total` | The upstream status, or `error` when no response arrived, such as after a timeout or a refused connection. |
 | `host` | The host and port of the outbound URL, such as `registry.npmjs.org`. Each redirect hop counts as its own request to its own host. |
 | `stage` | `metadata` for a package document: a packument or version manifest, a simple index page, a compact index file, a Go version list or `@latest`, or a sparse index file. `artifact` for a request for one release's file. |
