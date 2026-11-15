@@ -199,12 +199,14 @@ The upstream is `https://registry.npmjs.org`. Download counts come from `https:/
 | `GET /npm/<name>/<version-or-tag>` | One version manifest from the filtered packument. A missing version gets the 403 for that version. A dist-tag that filtering removed gets the 403 for the version the tag points at upstream. |
 | `GET /npm/<name>/-/<file>.tgz` | Enforced tarball. The version is the one whose packument entry links to the file. If no entry does, the version comes from the file name. |
 | `GET /npm/-/package/<name>/dist-tags` | The dist-tags of the filtered packument, for `npm dist-tag ls`. |
-| `POST /npm/-/npm/v1/security/advisories/bulk`, `POST /npm/-/npm/v1/security/audits/quick` | Passed through, for `npm audit`. |
+| `POST /npm/-/npm/v1/security/advisories/bulk`, `POST /npm/-/npm/v1/security/audits`, `POST /npm/-/npm/v1/security/audits/quick` | Passed through, for `npm audit`, `pnpm audit`, `yarn npm audit`, and `bun audit`. |
 | Any other `GET` under `/npm/-/` | Passed through, with only the `Accept` header and the query string. A path that [Top-level routes](#top-level-routes) rejects gets 404 instead. |
 | Any other `GET` | 404, without an upstream request. |
 | Any other method | 405. |
 
 pkgwarden relays only the registry's own endpoints, which live under `/-/`. `registry.npmjs.org` answers other paths, such as `/<name>/<version>/`, with package documents that pkgwarden has not filtered.
+
+Yarn 1 sends `yarn audit` to `https://registry.yarnpkg.com` whatever registry you configure, so that audit never reaches pkgwarden.
 
 ### PyPI
 

@@ -69,6 +69,7 @@ func (r *Registry) Package(ctx context.Context, name string) (*policy.Package, e
 
 var auditPaths = map[string]bool{
 	"/-/npm/v1/security/advisories/bulk": true,
+	"/-/npm/v1/security/audits":          true,
 	"/-/npm/v1/security/audits/quick":    true,
 }
 

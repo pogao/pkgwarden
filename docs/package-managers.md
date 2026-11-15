@@ -47,7 +47,8 @@ npm also sends lockfile installs through pkgwarden. A `package-lock.json` entry 
 - A version manifest at `/npm/<name>/<version>` comes from the filtered packument.
 - A tarball download is checked against the version whose packument entry links to it, not the version in its file name.
 - `npm dist-tag ls` gets the tags of the filtered packument.
-- `npm audit` requests and the other registry endpoints under `/npm/-/`, such as `npm search`, pass through to `registry.npmjs.org` unchanged. Any other path gets 404.
+- Audit requests from `npm audit`, `pnpm audit`, `yarn npm audit`, and `bun audit` pass through to `registry.npmjs.org` unchanged. So do the other registry endpoints under `/npm/-/`, such as `npm search`. Any other path gets 404.
+- Yarn 1 sends `yarn audit` to `registry.yarnpkg.com` whatever registry you configure, so pkgwarden never sees it.
 - Publishing and every other write method get 405. Publish to the public registry directly.
 
 ### What you see when a release is blocked
@@ -71,6 +72,12 @@ If npm fetches the tarball directly, such as from a lockfile, it prints pkgwarde
 	...
 
 If the whole package is blocked, or every version of it is, the packument request itself gets the 403, and npm prints the reason in the same form.
+
+Yarn 4 `yarn npm audit` fails when the lockfile holds a version that pkgwarden blocks, because Yarn looks up that version in the filtered packument to check for deprecations:
+
+	➤ YN0001: TypeError: Cannot destructure property 'deprecated' of 'ie.versions[ae]' as it is undefined.
+
+Run `yarn npm audit --no-deprecations` to skip that lookup. The audit then reports the same advisories as `registry.npmjs.org`.
 
 ## pip, uv, and Poetry
 
