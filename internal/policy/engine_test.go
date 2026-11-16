@@ -610,3 +610,65 @@ func TestIndexedPackageSeesChangedAdvisories(t *testing.T) {
 		t.Errorf("another engine with no advisories blocked %v, want [false false]", got)
 	}
 }
+
+var heuristicsOn = HeuristicsConfig{Enabled: true, NewPackageAge: 7 * 24 * time.Hour, LowWeeklyDownloads: 100, WarnScore: 30, BlockScore: 70}
+
+func TestIndexedPackageLeavesCooldownOnTime(t *testing.T) {
+	pkg := Package{Ecosystem: ecosystem.Npm, Name: "finalhandler", WeeklyDownloads: 1 << 20, Created: daysAgo(400), Releases: []Release{
+		{Version: "1.0.0", Published: daysAgo(400)},
+		{Version: "1.1.0", Published: daysAgo(6)},
+	}}
+	pkg.Index()
+	e := newTestEngine(Config{Cooldown: 7 * 24 * time.Hour, Heuristics: heuristicsOn}, nil)
+	assess := func() *Assessment {
+		cp := pkg
+		return e.Assess(context.Background(), &cp)
+	}
+	assertMentions(t, assertDecision(t, assess(), "1.1.0", Block), "cooldown: published 6d ago")
+	e.now = func() time.Time { return testNow.Add(25 * time.Hour) }
+	assertDecision(t, assess(), "1.1.0", Allow)
+}
+
+func TestReassessingAnIndexedPackageCostsTheSameForAnyName(t *testing.T) {
+	allocs := func(name string) (float64, *Assessment) {
+		pkg := Package{Ecosystem: ecosystem.Npm, Name: name, WeeklyDownloads: 1 << 20, Created: daysAgo(400), Releases: []Release{
+			{Version: "1.0.0", Published: daysAgo(400)},
+		}}
+		pkg.Index()
+		e := newTestEngine(Config{Heuristics: heuristicsOn}, nil)
+		var a *Assessment
+		n := testing.AllocsPerRun(20, func() {
+			cp := pkg
+			a = e.Assess(context.Background(), &cp)
+		})
+		return n, a
+	}
+	listed, _ := allocs("express")
+	unlisted, _ := allocs("finalhandler")
+	t.Logf("reassessing an indexed package allocated %.0f times for express, %.0f for finalhandler", listed, unlisted)
+	if unlisted > listed+4 {
+		t.Errorf("reassessing an indexed finalhandler allocated %.0f times, express %.0f: the typosquat scan of an unlisted name runs on every assessment", unlisted, listed)
+	}
+	_, typo := allocs("expresss")
+	if !slices.Contains(shownRules(typo.Package), RuleTyposquat) {
+		t.Errorf("reassessed indexed expresss shows %v, want the typosquat finding", shownRules(typo.Package))
+	}
+}
+
+func BenchmarkAssessIndexed(b *testing.B) {
+	for _, n := range []int{300, 4000} {
+		b.Run(fmt.Sprintf("releases=%d", n), func(b *testing.B) {
+			pkg := Package{Ecosystem: ecosystem.Npm, Name: "finalhandler", WeeklyDownloads: 1 << 20, Created: daysAgo(400)}
+			for i := range n {
+				pkg.Releases = append(pkg.Releases, Release{Version: fmt.Sprintf("1.%d.0", i), Published: daysAgo(400), Publishers: []string{"alice"}})
+			}
+			pkg.Index()
+			advs := []advisory.Advisory{{ID: "GHSA-1", Kind: advisory.Vulnerability, Ecosystem: ecosystem.Npm, Ranges: []advisory.Range{{Introduced: "0", Fixed: "1.20.0"}}}}
+			e := newTestEngine(Config{Cooldown: 7 * 24 * time.Hour, Heuristics: heuristicsOn}, fakeSource{advs: advs})
+			for b.Loop() {
+				cp := pkg
+				e.Assess(context.Background(), &cp).Release("1.7.0")
+			}
+		})
+	}
+}
