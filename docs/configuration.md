@@ -120,9 +120,9 @@ The TCP address of a second HTTP listener that serves only `GET /metrics`, in th
 
 ### `-max-in-flight`
 
-The most requests pkgwarden works on at once. A request past the limit gets 503 with `Retry-After: 1` and a plain-text body, and pkgwarden closes its connection. pkgwarden does not queue it. npm retries a request that gets 503, twice by default (`fetch-retries`), so a short burst past the limit costs retries. pkgwarden does not count `/healthz` and `/metrics`, and it never refuses them. `0` turns the limit off. A negative value is rejected.
+The most requests pkgwarden works on at once. A request past the limit gets 503 with `Retry-After: 1` and a plain-text body, and pkgwarden closes its connection. pkgwarden does not queue it. npm retries a request that gets 503, twice by default (`fetch-retries`), so a short burst past the limit costs retries. pkgwarden does not count `/healthz` or the `/metrics` endpoint, and it never refuses them. `0` turns the limit off. A negative value is rejected.
 
-Each request in progress holds memory for its connection. The limit caps that memory, so that a burst of clients cannot take the container past its memory limit. The default of 4608 fits a 2 GiB container with `GOMEMLIMIT=1200MiB`. To size the limit for your container, see [Give it enough memory](deployment.md#give-it-enough-memory). The `pkgwarden_http_requests_in_flight` gauge and the `pkgwarden_http_requests_refused_total` counter show how close pkgwarden runs to the limit. See [Metric reference](observability.md#metric-reference).
+Each request in progress holds memory for its connection. The limit caps that memory, so that a burst of clients cannot take the container past its memory limit. A request holds its place until its response is sent, so a slow download counts for as long as it takes. The default of 4608 fits a 2 GiB container with `GOMEMLIMIT=1000MiB`. To size the limit for your container, see [Give it enough memory](deployment.md#give-it-enough-memory). The `pkgwarden_http_requests_in_flight` gauge and the `pkgwarden_http_requests_refused_total` counter show how close pkgwarden runs to the limit. See [Metric reference](observability.md#metric-reference).
 
 ### `-public-url`
 
