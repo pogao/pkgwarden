@@ -41,6 +41,8 @@ const fetchTimeout = 2 * time.Minute
 // lookup that runs out of time counts as policy.UnknownDownloads.
 const DownloadsTimeout = 5 * time.Second
 
+var relayWriteTimeout = 60 * time.Second
+
 // Upstream fetches from upstream registries. Metadata fetched through Fetch
 // or FetchParsed is cached briefly and concurrent identical requests share
 // one round trip. Artifacts go through Open and are never cached, and
@@ -222,7 +224,17 @@ func relay(w http.ResponseWriter, req *http.Request, resp *http.Response) (int64
 	if req.Method == http.MethodHead {
 		return 0, nil
 	}
-	return io.Copy(w, resp.Body)
+	return io.Copy(deadlineWriter{w, http.NewResponseController(w)}, resp.Body)
+}
+
+type deadlineWriter struct {
+	w  io.Writer
+	rc *http.ResponseController
+}
+
+func (d deadlineWriter) Write(p []byte) (int, error) {
+	d.rc.SetWriteDeadline(time.Now().Add(relayWriteTimeout))
+	return d.w.Write(p)
 }
 
 // WriteError maps an upstream failure to a response.
