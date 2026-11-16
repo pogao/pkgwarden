@@ -12,6 +12,7 @@ import (
 	"errors"
 	"io"
 	"math"
+	"math/rand/v2"
 	"net"
 	"net/http"
 	"net/url"
@@ -43,7 +44,7 @@ func New(base *http.Transport) *Transport {
 }
 
 const (
-	maxRetries  = 2
+	maxResends  = 7
 	redialAfter = time.Second
 )
 
@@ -51,13 +52,14 @@ var errHTTP1 = errors.New("connpool: host speaks HTTP/1")
 
 // RoundTrip sends req. Like net/http's own HTTP/2 client, it sends req
 // again when the server cannot have processed it, as long as the body is
-// empty or GetBody can replay it.
+// empty or GetBody can replay it, and it waits before each resend after the
+// first as net/http does.
 func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if req.URL.Scheme != "https" {
 		return t.base.RoundTrip(req)
 	}
 	h := t.host(req.URL)
-	for attempt := 0; ; attempt++ {
+	for resends := 0; ; {
 		if h.http1.Load() {
 			return t.base.RoundTrip(req)
 		}
@@ -78,7 +80,7 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 		if err == nil {
 			return resp, nil
 		}
-		if attempt == maxRetries || req.Context().Err() != nil || !neverProcessed(err) {
+		if resends == maxResends || req.Context().Err() != nil || !neverProcessed(err) {
 			return nil, err
 		}
 		next, ok := rewind(req)
@@ -86,6 +88,32 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 			return nil, err
 		}
 		req = next
+		if err := waitToResend(req, resends); err != nil {
+			return nil, err
+		}
+		resends++
+	}
+}
+
+// waitToResend waits as net/http's HTTP/2 client does before its resends:
+// not at all before the first, then 1 s, 2 s, 4 s, and on, each plus up to
+// 10% jitter. It closes req's body if req's context ends first.
+func waitToResend(req *http.Request, resends int) error {
+	if resends == 0 {
+		return nil
+	}
+	d := time.Second << (resends - 1)
+	d += time.Duration(rand.Int64N(int64(d / 10)))
+	tm := time.NewTimer(d)
+	defer tm.Stop()
+	select {
+	case <-tm.C:
+		return nil
+	case <-req.Context().Done():
+		if req.Body != nil {
+			req.Body.Close()
+		}
+		return context.Cause(req.Context())
 	}
 }
 

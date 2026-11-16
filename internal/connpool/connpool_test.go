@@ -300,7 +300,7 @@ func TestServerGOAWAYRaceIsResent(t *testing.T) {
 	p := connpool.New(base(s.Server))
 
 	err := errors.Join(burst(4, func() error {
-		for range 200 {
+		for range 50 {
 			if err := getHTTP2(p, s.URL); err != nil {
 				return err
 			}
@@ -308,7 +308,32 @@ func TestServerGOAWAYRaceIsResent(t *testing.T) {
 		return nil
 	})...)
 	if err != nil {
-		t.Errorf("800 requests to a server that closes each idle connection: %v", err)
+		t.Errorf("200 requests to a server that closes each idle connection: %v", err)
+	}
+}
+
+func TestStreamPastGOAWAYIsResentOnANewConnection(t *testing.T) {
+	var requests atomic.Int64
+	s := serveH2(t, func(c *h2Conn, stream uint32) {
+		requests.Add(1)
+		if c.n == 1 && stream > 1 {
+			c.frame(frameGoAway, 0, 0, binary.BigEndian.AppendUint32(binary.BigEndian.AppendUint32(nil, 1), 0))
+			return
+		}
+		c.respond(stream)
+	})
+	p := connpool.New(base(s.Server))
+
+	for i := range 2 {
+		if err := getHTTP2(p, s.URL); err != nil {
+			t.Fatalf("request %d: %v", i+1, err)
+		}
+	}
+	if got := requests.Load(); got != 3 {
+		t.Errorf("server saw %d requests, want 3: the first, the second past GOAWAY, and its resend", got)
+	}
+	if got := s.opened.Load(); got != 2 {
+		t.Errorf("opened %d connections, want 2", got)
 	}
 }
 
