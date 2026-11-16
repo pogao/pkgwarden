@@ -34,7 +34,7 @@ This is the output of `env -u GITHUB_TOKEN go run ./cmd/pkgwarden -h 2>&1` at th
 	  -low-downloads int
 	    	weekly downloads below this count as unpopular (default 100)
 	  -max-in-flight int
-	    	most requests in progress at once; past it, requests get 503 with Retry-After (0 disables the limit) (default 8192)
+	    	most requests in progress at once; past it, requests get 503 with Retry-After (0 disables the limit) (default 4608)
 	  -metadata-cache-bytes int
 	    	most bytes of upstream metadata the cache holds (0 disables it) (default 268435456)
 	  -metadata-ttl duration
@@ -96,7 +96,7 @@ A command-line flag replaces the environment value. It does not add to it. `-all
 | `-listen` | string | `:8080` | `PKGWARDEN_LISTEN` |
 | `-log-level` | level | `info` | `PKGWARDEN_LOG_LEVEL` |
 | `-low-downloads` | int | `100` | `PKGWARDEN_LOW_DOWNLOADS` |
-| `-max-in-flight` | int | `8192` | `PKGWARDEN_MAX_IN_FLIGHT` |
+| `-max-in-flight` | int | `4608` | `PKGWARDEN_MAX_IN_FLIGHT` |
 | `-metadata-cache-bytes` | int | `268435456` (256 MiB) | `PKGWARDEN_METADATA_CACHE_BYTES` |
 | `-metadata-ttl` | duration | `5m0s` | `PKGWARDEN_METADATA_TTL` |
 | `-metrics-listen` | string | empty, `/metrics` is served on `-listen` | `PKGWARDEN_METRICS_LISTEN` |
@@ -120,9 +120,9 @@ The TCP address of a second HTTP listener that serves only `GET /metrics`, in th
 
 ### `-max-in-flight`
 
-The most requests pkgwarden works on at once. A request past the limit gets 503 with `Retry-After: 1` and a plain-text body. pkgwarden does not queue it. npm retries a request that gets 503, twice by default (`fetch-retries`), so a short burst past the limit costs retries. pkgwarden does not count `/healthz` and `/metrics`, and it never refuses them. `0` turns the limit off. A negative value is rejected.
+The most requests pkgwarden works on at once. A request past the limit gets 503 with `Retry-After: 1` and a plain-text body, and pkgwarden closes its connection. pkgwarden does not queue it. npm retries a request that gets 503, twice by default (`fetch-retries`), so a short burst past the limit costs retries. pkgwarden does not count `/healthz` and `/metrics`, and it never refuses them. `0` turns the limit off. A negative value is rejected.
 
-Each request in progress holds memory for its connection. The limit caps that memory, so that a burst of clients cannot take the container past its memory limit. The default of 8192 fits a 2 GiB container. To size the limit for your container, see [Give it enough memory](deployment.md#give-it-enough-memory). The `pkgwarden_http_requests_in_flight` gauge and the `pkgwarden_http_requests_refused_total` counter show how close pkgwarden runs to the limit. See [Metric reference](observability.md#metric-reference).
+Each request in progress holds memory for its connection. The limit caps that memory, so that a burst of clients cannot take the container past its memory limit. The default of 4608 fits a 2 GiB container with `GOMEMLIMIT=1200MiB`. To size the limit for your container, see [Give it enough memory](deployment.md#give-it-enough-memory). The `pkgwarden_http_requests_in_flight` gauge and the `pkgwarden_http_requests_refused_total` counter show how close pkgwarden runs to the limit. See [Metric reference](observability.md#metric-reference).
 
 ### `-public-url`
 

@@ -192,7 +192,7 @@ func TestMaxInFlightConfig(t *testing.T) {
 		args []string
 		want int
 	}{
-		{name: "default", want: 8192},
+		{name: "default", want: 4608},
 		{name: "environment", env: "100", want: 100},
 		{name: "flag wins over the environment", env: "100", args: []string{"-max-in-flight", "0"}, want: 0},
 	}

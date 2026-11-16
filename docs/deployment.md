@@ -115,11 +115,13 @@ The largest packument in common use is renovate's, at about 75 MB. In five runs 
 
 Many concurrent clients add to that. On 2026-11-15, pkgwarden ran with the settings below on 4 CPUs, with typescript's 16 MB packument in its cache. A load generator on other CPUs kept a fixed number of requests for that packument in flight for 20 seconds. In two runs at each size, every request succeeded with 4,096 clients and with 8,192 clients. The container's memory peaked between 1.15 and 1.22 GiB with 4,096 clients, and between 1.52 and 1.76 GiB with 8,192 clients. With 16,384 clients, it reached the 2 GiB limit, and most requests timed out before the network delivered their 16 MB. These runs had no limit on requests in progress, as with `-max-in-flight 0`.
 
-Past `-max-in-flight`, pkgwarden answers 503 instead of working on the request. The memory of the requests in progress then grows with `-max-in-flight`, not with the number of clients. The default of 8192 fits the 2 GiB container below. To raise `-max-in-flight`, add about 250 KiB of memory for each request past 8192. TODO(bench): numbers at 16,384 and 32,768 clients
+Past `-max-in-flight`, pkgwarden answers 503 instead of working on the request, and closes the connection. The memory of the requests in progress then grows with `-max-in-flight`, not with the number of clients. The same bench ran with the default of 4608 and the settings below. With 4,096 clients, no request was refused and the container's memory peaked at 1.34 GiB. In two runs each, memory peaked at 1.75 and 1.84 GiB with 16,384 clients, and at 1.74 and 1.85 GiB with 32,768 clients. Every request got either the packument or a 503. To raise `-max-in-flight`, add about 250 KiB of memory for each request past 4608.
 
-Give the container 2 GiB of memory, and set `GOMEMLIMIT` to about 80% of the limit, so that the Go garbage collector works harder before the container runs out:
+The kernel's socket buffers and socket state count toward the container's limit, but Go cannot see them, so `GOMEMLIMIT` does not cover them. At the peaks above they held up to 700 MiB, beside about 1.2 GiB used by pkgwarden itself. With `GOMEMLIMIT=1600MiB`, the bench reached the 2 GiB limit with 32,768 clients even with the limit at 4096.
 
-	docker run -p 8080:8080 -m 2g -e GOMEMLIMIT=1600MiB pkgwarden
+Give the container 2 GiB of memory, and set `GOMEMLIMIT` about 850 MiB below its limit, so that the Go garbage collector works harder before the container runs out:
+
+	docker run -p 8080:8080 -m 2g -e GOMEMLIMIT=1200MiB pkgwarden
 
 On Kubernetes, set `resources.limits.memory` and the `GOMEMLIMIT` environment variable the same way. If you change `-metadata-cache-bytes`, change the limit by the same amount. With `-go-index`, add about 100 MiB for a 7-day cooldown, and more for a longer one. See [What it costs](cooldown.md#what-it-costs).
 
