@@ -87,7 +87,7 @@ func TestUpstreamBurstPastStreamLimitKeepsEveryConnection(t *testing.T) {
 	srv.StartTLS()
 	defer srv.Close()
 	telemetrytest.CaptureLogs(t)
-	client := upstreamClient(srv.Client().Transport.(*http.Transport).TLSClientConfig)
+	client := upstreamClient(srv.Client().Transport.(*http.Transport).TLSClientConfig.Clone())
 	get := func() error {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()

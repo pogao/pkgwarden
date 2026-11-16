@@ -2,6 +2,8 @@ package connpool_test
 
 import (
 	"context"
+	"crypto/tls"
+	"encoding/binary"
 	"errors"
 	"io"
 	"net"
@@ -50,8 +52,85 @@ func respondAfter(d time.Duration) http.Handler {
 func base(s *httptest.Server) *http.Transport {
 	return &http.Transport{
 		ForceAttemptHTTP2: true,
-		TLSClientConfig:   s.Client().Transport.(*http.Transport).TLSClientConfig,
+		TLSClientConfig:   s.Client().Transport.(*http.Transport).TLSClientConfig.Clone(),
 	}
+}
+
+// h2Server speaks just enough HTTP/2 to let a test send frames that
+// net/http's own server sends only under races: a refused stream, or GOAWAY
+// before a connection's first response.
+type h2Server struct {
+	*httptest.Server
+	opened atomic.Int64
+}
+
+type h2Conn struct {
+	n  int64 // 1 for the server's first connection
+	mu sync.Mutex
+	c  net.Conn
+}
+
+const (
+	frameData     = 0x0
+	frameHeaders  = 0x1
+	frameRST      = 0x3
+	frameSettings = 0x4
+	framePing     = 0x6
+	frameGoAway   = 0x7
+	flagAck       = 0x1
+	flagEndStream = 0x1
+	flagEndHeader = 0x4
+	refusedStream = 0x7
+)
+
+func (c *h2Conn) frame(typ, flags byte, stream uint32, payload []byte) {
+	hdr := []byte{byte(len(payload) >> 16), byte(len(payload) >> 8), byte(len(payload)), typ, flags}
+	hdr = binary.BigEndian.AppendUint32(hdr, stream)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.c.Write(append(hdr, payload...))
+}
+
+// respond answers stream with :status 200 (HPACK static index 8) and no body.
+func (c *h2Conn) respond(stream uint32) {
+	c.frame(frameHeaders, flagEndStream|flagEndHeader, stream, []byte{0x88})
+}
+
+func serveH2(t *testing.T, onRequest func(c *h2Conn, stream uint32)) *h2Server {
+	t.Helper()
+	s := &h2Server{Server: httptest.NewUnstartedServer(http.NotFoundHandler())}
+	s.TLS = &tls.Config{NextProtos: []string{"h2"}}
+	s.Config.TLSNextProto = map[string]func(*http.Server, *tls.Conn, http.Handler){
+		"h2": func(_ *http.Server, tc *tls.Conn, _ http.Handler) {
+			c := &h2Conn{n: s.opened.Add(1), c: tc}
+			if _, err := io.ReadFull(tc, make([]byte, len("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"))); err != nil {
+				return
+			}
+			c.frame(frameSettings, 0, 0, binary.BigEndian.AppendUint32([]byte{0, 0x3}, streams))
+			hdr := make([]byte, 9)
+			for {
+				if _, err := io.ReadFull(tc, hdr); err != nil {
+					return
+				}
+				payload := make([]byte, int(hdr[0])<<16|int(hdr[1])<<8|int(hdr[2]))
+				if _, err := io.ReadFull(tc, payload); err != nil {
+					return
+				}
+				stream := binary.BigEndian.Uint32(hdr[5:]) &^ (1 << 31)
+				switch typ, flags := hdr[3], hdr[4]; {
+				case typ == frameSettings && flags&flagAck == 0:
+					c.frame(frameSettings, flagAck, 0, nil)
+				case typ == framePing && flags&flagAck == 0:
+					c.frame(framePing, flagAck, 0, payload)
+				case typ == frameHeaders:
+					go onRequest(c, stream)
+				}
+			}
+		},
+	}
+	s.StartTLS()
+	t.Cleanup(s.Close)
+	return s
 }
 
 func get(ctx context.Context, rt http.RoundTripper, url string) (proto int, err error) {
@@ -230,5 +309,56 @@ func TestServerGOAWAYRaceIsResent(t *testing.T) {
 	})...)
 	if err != nil {
 		t.Errorf("800 requests to a server that closes each idle connection: %v", err)
+	}
+}
+
+func TestRefusedStreamIsResent(t *testing.T) {
+	var requests atomic.Int64
+	s := serveH2(t, func(c *h2Conn, stream uint32) {
+		if requests.Add(1) == 1 {
+			c.frame(frameRST, 0, stream, binary.BigEndian.AppendUint32(nil, refusedStream))
+			return
+		}
+		c.respond(stream)
+	})
+	p := connpool.New(base(s.Server))
+
+	if err := getHTTP2(p, s.URL); err != nil {
+		t.Fatalf("request whose first stream the server refused: %v", err)
+	}
+	if got := requests.Load(); got != 2 {
+		t.Errorf("server saw %d requests, want 2, the refused one and its resend", got)
+	}
+}
+
+func TestGOAWAYBeforeFirstResponseKeepsTheDialPlan(t *testing.T) {
+	arrived := make(chan struct{})
+	s := serveH2(t, func(c *h2Conn, stream uint32) {
+		if c.n == 1 {
+			close(arrived)
+			c.frame(frameGoAway, 0, 0, binary.BigEndian.AppendUint32(binary.BigEndian.AppendUint32(nil, stream), 0))
+			time.Sleep(100 * time.Millisecond)
+			c.frame(frameHeaders, flagEndHeader, stream, []byte{0x88})
+			time.Sleep(50 * time.Millisecond)
+			c.frame(frameData, flagEndStream, stream, []byte("ok"))
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+		c.respond(stream)
+	})
+	p := connpool.New(base(s.Server))
+	first := make(chan error, 1)
+	go func() { first <- getHTTP2(p, s.URL) }()
+	<-arrived
+
+	const n = 100
+	if err := errors.Join(burst(n, func() error { return getHTTP2(p, s.URL) })...); err != nil {
+		t.Fatalf("burst of %d requests queued behind a connection that went away: %v", n, err)
+	}
+	if err := <-first; err != nil {
+		t.Fatalf("first request, answered after GOAWAY: %v", err)
+	}
+	if got, want := s.opened.Load(), int64(1+(n+streams-1)/streams+1); got > want {
+		t.Errorf("opened %d connections, want at most %d: the one that went away, then %d requests at %d streams each, plus one probing", got, want, n, streams)
 	}
 }
