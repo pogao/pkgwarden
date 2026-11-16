@@ -99,6 +99,7 @@ Error bodies are plain text.
 | 404 | `not found` | The upstream registry has no such package. |
 | 499 | None | The client closed the connection before pkgwarden answered. The client never receives this status. It appears only in the request log and the metrics. |
 | 502 | `upstream error: <error>` | The upstream registry failed or answered with an unexpected status. |
+| 503 | `pkgwarden: too many requests in progress, retry later` | [`-max-in-flight`](configuration.md#-max-in-flight) requests were in progress. The response has `Retry-After: 1`. Every route but `/healthz` and `/metrics` answers this way past the limit. |
 
 A failed advisory lookup is not an error. It is an `advisory-lookup` finding in a 200 response.
 

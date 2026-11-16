@@ -16,6 +16,8 @@ Every pkgwarden series starts with `pkgwarden_`. No metric has a package name or
 | --- | --- | --- | --- |
 | `pkgwarden_http_requests_total` | counter | `ecosystem`, `method`, `code` | Inbound requests that pkgwarden finished. |
 | `pkgwarden_http_request_duration_seconds` | histogram | `ecosystem` | Time from the request's arrival until pkgwarden finished the response. |
+| `pkgwarden_http_requests_in_flight` | gauge | none | Inbound requests in progress that count toward [`-max-in-flight`](configuration.md#-max-in-flight). `/healthz` and `/metrics` are not counted. It counts with the limit off too. |
+| `pkgwarden_http_requests_refused_total` | counter | none | Inbound requests that pkgwarden answered with 503 because `-max-in-flight` requests were in progress. `pkgwarden_http_requests_total` also counts each one, with `code="503"`. |
 | `pkgwarden_decisions_total` | counter | `ecosystem`, `stage`, `decision` | Policy verdicts that pkgwarden applied to a response. |
 | `pkgwarden_findings_total` | counter | `ecosystem`, `stage`, `rule`, `decision` | Rules behind each `warn` or `block` verdict. |
 | `pkgwarden_artifacts_served_total` | counter | `ecosystem` | Package files that pkgwarden relayed to a client. |
@@ -70,6 +72,9 @@ Each query answers one question a security engineer asks about a running proxy.
 | Question | PromQL |
 | --- | --- |
 | How many requests does each ecosystem get? | `sum by (ecosystem) (rate(pkgwarden_http_requests_total[5m]))` |
+| Is pkgwarden turning requests away at `-max-in-flight`? | `sum by (instance) (rate(pkgwarden_http_requests_refused_total[5m])) > 0` |
+| What share of requests did pkgwarden turn away? | `sum(rate(pkgwarden_http_requests_refused_total[5m])) / sum(rate(pkgwarden_http_requests_total[5m]))` |
+| How many requests were in progress at the busiest scrape of the last hour? | `max_over_time(pkgwarden_http_requests_in_flight[1h])` |
 | How slow is each ecosystem for clients? | `histogram_quantile(0.95, sum by (ecosystem, le) (rate(pkgwarden_http_request_duration_seconds_bucket[5m])))` |
 | How many downloads did pkgwarden block in the last day? | `sum by (ecosystem) (increase(pkgwarden_decisions_total{stage="artifact", decision="block"}[24h]))` |
 | How many malicious-package blocks happened in the last day? | `sum by (ecosystem) (increase(pkgwarden_findings_total{rule="advisory/malicious", decision="block"}[24h]))` |
