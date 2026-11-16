@@ -114,8 +114,7 @@ func releasesProxy(t *testing.T, n, pad int, src fakeSource) (*httptest.Server, 
 // together serves srv's handler at a new URL where each of the first n
 // requests waits until all n have arrived. Without it, a request whose
 // connection opens late on a loaded machine can reach the proxy after the
-// shared rewrite has ended, and then does a rewrite of its own. A request
-// sent there with srv's Host gets the tarball links srv itself serves.
+// shared rewrite has ended, and then does a rewrite of its own.
 func together(t *testing.T, srv *httptest.Server, n int) string {
 	t.Helper()
 	var arrived sync.WaitGroup
@@ -180,24 +179,29 @@ func send(url, host string, w io.Writer) (int, error) {
 	return resp.StatusCode, err
 }
 
+var hostsUsed atomic.Int32
+
+// unusedHost returns a Host header that no earlier request sent, so no kept
+// rewrite answers a request that sends it.
+func unusedHost() string { return fmt.Sprintf("host%d.example", hostsUsed.Add(1)) }
+
 func TestConcurrentPackumentRequestsShareOneRewrite(t *testing.T) {
 	srv, _ := bigProxy(t, 8<<10)
 	packument := srv.URL + "/npm/big"
 	if code, err := send(packument, "", io.Discard); err != nil || code != http.StatusOK {
 		t.Fatalf("first packument request: status %d, error %v", code, err)
 	}
-	lone := sha256.New()
-	one := bytesAllocated(func() { send(packument, "", lone) })
+	one := bytesAllocated(func() { send(packument, unusedHost(), io.Discard) })
 
 	const n = 16
-	burst := together(t, srv, n) + "/npm/big"
+	burst, host := together(t, srv, n)+"/npm/big", unusedHost()
 	sums := make([][]byte, n)
 	allocated := bytesAllocated(func() {
 		var wg sync.WaitGroup
 		for i := range n {
 			wg.Go(func() {
 				h := sha256.New()
-				if code, err := send(burst, srv.Listener.Addr().String(), h); err != nil || code != http.StatusOK {
+				if code, err := send(burst, host, h); err != nil || code != http.StatusOK {
 					t.Errorf("status %d, error %v, want 200", code, err)
 				}
 				sums[i] = h.Sum(nil)
@@ -206,9 +210,11 @@ func TestConcurrentPackumentRequestsShareOneRewrite(t *testing.T) {
 		wg.Wait()
 	})
 
+	later := sha256.New()
+	send(packument, host, later)
 	for i, sum := range sums {
-		if !bytes.Equal(sum, lone.Sum(nil)) {
-			t.Errorf("concurrent response %d differs from a lone request's", i)
+		if !bytes.Equal(sum, later.Sum(nil)) {
+			t.Errorf("concurrent response %d differs from a later request's", i)
 		}
 	}
 	t.Logf("one packument request allocated %d bytes, %d concurrent ones %d", one, n, allocated)
@@ -218,21 +224,46 @@ func TestConcurrentPackumentRequestsShareOneRewrite(t *testing.T) {
 	}
 }
 
+func TestRepeatPackumentRequestsDoNotRewriteThePackument(t *testing.T) {
+	srv, doc := bigProxy(t, 8<<10)
+	packument := srv.URL + "/npm/big"
+	first := sha256.New()
+	if code, err := send(packument, "", first); err != nil || code != http.StatusOK {
+		t.Fatalf("first packument request: status %d, error %v", code, err)
+	}
+	for i := range 5 {
+		h := sha256.New()
+		var code int
+		var err error
+		allocated := bytesAllocated(func() { code, err = send(packument, "", h) })
+		if err != nil || code != http.StatusOK {
+			t.Fatalf("repeat request %d: status %d, error %v", i, code, err)
+		}
+		if !bytes.Equal(h.Sum(nil), first.Sum(nil)) {
+			t.Errorf("repeat response %d differs from the first", i)
+		}
+		t.Logf("repeat request %d allocated %d bytes, for a %d-byte packument", i, allocated, len(doc))
+		if !raceEnabled && allocated > uint64(len(doc))/16 {
+			t.Errorf("repeat request %d for a cached packument allocated %d bytes, more than a sixteenth of the %d-byte packument", i, allocated, len(doc))
+		}
+	}
+}
+
 func TestConcurrentManifestRequestsDoNotEachParseThePackument(t *testing.T) {
 	srv, doc := bigProxy(t, 8<<10)
 	manifest := srv.URL + "/npm/big/1.7.0"
 	if code, err := send(manifest, "", io.Discard); err != nil || code != http.StatusOK {
 		t.Fatalf("first manifest request: status %d, error %v", code, err)
 	}
-	one := bytesAllocated(func() { send(manifest, "", io.Discard) })
+	one := bytesAllocated(func() { send(manifest, unusedHost(), io.Discard) })
 
 	const n = 16
-	burst := together(t, srv, n) + "/npm/big/1.7.0"
+	burst, host := together(t, srv, n)+"/npm/big/1.7.0", unusedHost()
 	allocated := bytesAllocated(func() {
 		var wg sync.WaitGroup
 		for range n {
 			wg.Go(func() {
-				if code, err := send(burst, srv.Listener.Addr().String(), io.Discard); err != nil || code != http.StatusOK {
+				if code, err := send(burst, host, io.Discard); err != nil || code != http.StatusOK {
 					t.Errorf("status %d, error %v, want 200", code, err)
 				}
 			})
@@ -292,13 +323,14 @@ func heldWhileWaiting(t *testing.T, releases, n int) uint64 {
 	if code, err := send(packument, "", io.Discard); err != nil || code != http.StatusOK {
 		t.Fatalf("first packument request: status %d, error %v", code, err)
 	}
+	host := unusedHost()
 	release := reg.HoldRewrites()
 	before := heapAlloc()
 	var wg sync.WaitGroup
 	var failed atomic.Int32
 	for range n {
 		wg.Go(func() {
-			if code, err := send(packument, "", io.Discard); err != nil || code != http.StatusOK {
+			if code, err := send(packument, host, io.Discard); err != nil || code != http.StatusOK {
 				failed.Add(1)
 				t.Errorf("status %d, error %v, want 200", code, err)
 			}

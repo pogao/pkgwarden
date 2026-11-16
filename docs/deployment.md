@@ -104,8 +104,10 @@ pkgwarden reads at most 128 MiB of a metadata document and drops the rest. A JSO
 
 pkgwarden's memory has four parts:
 
-- The metadata cache, which holds at most `-metadata-cache-bytes` (default 256 MiB).
+- The metadata cache, which holds at most `-metadata-cache-bytes` (default 256 MiB). The budget also counts the rewritten npm packuments that pkgwarden keeps, so a cached packument can take about twice its size.
 - Rewriting npm packuments. To answer a packument request, pkgwarden parses the packument and writes it out again without the blocked versions. The rewrite needs about ten times the packument's size in memory while it runs. Concurrent requests for the same packument share one rewrite. pkgwarden rewrites at most 64 MiB of different packuments at a time, or one larger packument alone, so their rewrites wait for each other instead of adding up.
+
+  pkgwarden keeps the result in the metadata cache, one for each packument and each address that clients use to reach pkgwarden. With `-public-url` set, that is one for each packument. A later request uses the kept result only if the packument and its blocked versions are still the same. Otherwise pkgwarden rewrites it again, so a release that leaves its cooldown appears in the next response.
 - The responses in progress, each about the size of the document it sends. Concurrent responses with the same packument share one copy of it.
 - The connections in progress. pkgwarden uses 60 to 90 KiB for each one while its request runs, however many releases the package has. The kernel also keeps a send buffer for each connection that is still sending a response, and the container's memory limit counts it. In the runs below, these buffers held 70 to 150 KiB per connection.
 
@@ -232,7 +234,7 @@ spec:
 
 - pkgwarden stores no artifacts. Every allowed download streams from the upstream registry. When a registry is down, installs from it fail.
 - Every cache is in memory and empty after a restart, so the first requests after a restart are slower.
-- pkgwarden rewrites at most 64 MiB of different npm packuments at a time, so a packument request that arrives behind several large ones waits for them. In five runs, 16 concurrent requests for 16 of the largest packuments, all cached, took 3.5 to 3.7 seconds to finish. A request for left-pad sent 0.5 seconds into them took 2.7 to 2.9 seconds. Concurrent requests for the same packument share one rewrite, so 16 concurrent requests for renovate's 75 MB packument took 1.1 to 1.2 seconds, and a left-pad request sent meanwhile took about 0.4 seconds. See [Give it enough memory](#give-it-enough-memory).
+- pkgwarden rewrites at most 64 MiB of different npm packuments at a time, so a packument request that arrives behind several large rewrites waits for them. A packument needs a rewrite after it enters the metadata cache, and again when its blocked versions change. In five runs, 16 concurrent requests for 16 of the largest packuments, all cached and none rewritten yet, took 3.5 to 3.7 seconds to finish. A request for left-pad sent 0.5 seconds into them took 2.7 to 2.9 seconds. Concurrent requests for the same packument share one rewrite, so 16 concurrent requests for renovate's 75 MB packument took 1.1 to 1.2 seconds, and a left-pad request sent meanwhile took about 0.4 seconds. See [Give it enough memory](#give-it-enough-memory).
 - The upstream registries are fixed to the public ones. pkgwarden cannot front a private registry.
 - The RubyGems legacy indexes pass through unfiltered. See [Bundler and gem](package-managers.md#bundler-and-gem).
 - The popular-package lists for typosquat detection are built into the binary. Refreshing them needs a new build. See [Refresh the popular-package lists](development.md#refresh-the-popular-package-lists).
