@@ -34,7 +34,7 @@ func (s signal) finding(d Decision) Finding {
 // decision.
 func (e *Engine) heuristics(pkg *Package, a *Assessment) {
 	h := e.cfg.Heuristics
-	pkgSignals := e.packageSignals(pkg)
+	pkgSignals := e.packageSignals(pkg, a.index)
 	pkgDecision := h.decide(total(pkgSignals))
 	if pkgDecision > Allow {
 		for _, s := range pkgSignals {
@@ -59,10 +59,10 @@ func (e *Engine) heuristics(pkg *Package, a *Assessment) {
 	}
 }
 
-func (e *Engine) packageSignals(pkg *Package) []signal {
+func (e *Engine) packageSignals(pkg *Package, x *releaseIndex) []signal {
 	h := e.cfg.Heuristics
 	var out []signal
-	if m, ok := resembles(pkg.Ecosystem, pkg.Name); ok {
+	if m, ok := x.resembles(); ok {
 		out = append(out, signal{RuleTyposquat, weightTyposquat,
 			fmt.Sprintf("resembles popular package %q (%s)", m.popular, m.how)})
 	}

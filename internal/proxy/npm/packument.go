@@ -8,6 +8,7 @@ import (
 	"path"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/mod/semver"
@@ -17,15 +18,22 @@ import (
 )
 
 // snapshot is a packument as the metadata cache keeps it: the upstream
-// document, which filtering parses and rewrites for each request, and the
-// facts a policy check needs, parsed once.
+// document, which filtering parses and rewrites, and the facts a policy
+// check needs, parsed once.
 type snapshot struct {
+	id  snapshotID
 	raw []byte
 	// pkg has no WeeklyDownloads, which come from another document.
 	pkg policy.Package
 	// files maps each dist.tarball file name to its version.
 	files map[string]string
 }
+
+// snapshotID names one snapshot without keeping it reachable, so a kept
+// rewrite does not hold its upstream document after the cache drops it.
+type snapshotID uint64
+
+var lastSnapshotID atomic.Uint64
 
 // releaseOverhead approximates the memory a release takes in a snapshot
 // besides its version string.
@@ -63,6 +71,7 @@ func parseSnapshot(name string, raw []byte) (*snapshot, int64, error) {
 		maintainers = append(maintainers, m.Name)
 	}
 	s := &snapshot{
+		id:    snapshotID(lastSnapshotID.Add(1)),
 		raw:   raw,
 		pkg:   policy.Package{Ecosystem: ecosystem.Npm, Name: name, Created: published("created")},
 		files: make(map[string]string, len(doc.Versions)),
@@ -158,25 +167,59 @@ type rewritten struct {
 	upstreamTags map[string]string
 	ok           bool
 	latest       string
+	size         int64
 
-	parseManifests sync.Once
+	indexManifests sync.Once
 	manifests      map[string]json.RawMessage
 	manifestsErr   error
 }
 
 // manifest returns the manifest of version v in body. The requests that
-// share a rewrite share one parse of body, and only manifest requests
+// share a rewrite share one index of body, and only manifest requests
 // wait for it.
 func (rw *rewritten) manifest(v string) (json.RawMessage, bool, error) {
-	rw.parseManifests.Do(func() {
-		var doc struct {
-			Versions map[string]json.RawMessage `json:"versions"`
-		}
-		rw.manifestsErr = json.Unmarshal(rw.body, &doc)
-		rw.manifests = doc.Versions
-	})
+	rw.indexManifests.Do(func() { rw.manifests, rw.manifestsErr = manifestsIn(rw.body) })
 	m, ok := rw.manifests[v]
 	return m, ok, rw.manifestsErr
+}
+
+// manifestsIn returns each manifest in the versions object of body as a
+// slice of body, so a kept rewrite holds no second copy of its manifests.
+func manifestsIn(body []byte) (map[string]json.RawMessage, error) {
+	dec := json.NewDecoder(bytes.NewReader(body))
+	if _, err := dec.Token(); err != nil {
+		return nil, err
+	}
+	for dec.More() {
+		key, err := dec.Token()
+		if err != nil {
+			return nil, err
+		}
+		if key != "versions" {
+			if err := dec.Decode(new(json.RawMessage)); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		if _, err := dec.Token(); err != nil {
+			return nil, err
+		}
+		manifests := map[string]json.RawMessage{}
+		for dec.More() {
+			v, err := dec.Token()
+			if err != nil {
+				return nil, err
+			}
+			var m json.RawMessage
+			if err := dec.Decode(&m); err != nil {
+				return nil, err
+			}
+			end := dec.InputOffset()
+			manifests[v.(string)] = body[end-int64(len(m)) : end]
+		}
+		return manifests, nil
+	}
+	return nil, nil
 }
 
 // filter returns the packument with every version that allowed rejects
@@ -196,7 +239,7 @@ func (p *packument) filter(allowed func(string) bool, tarballBase, registryPath 
 		kept[v] = raw
 	}
 	if len(p.versions) > 0 && len(kept) == 0 {
-		return &rewritten{upstreamTags: p.distTags, latest: p.latest()}, nil
+		return &rewritten{upstreamTags: p.distTags, latest: p.latest(), size: releaseOverhead}, nil
 	}
 	if p.doc["versions"] != nil {
 		if err := setJSON(p.doc, "versions", kept); err != nil {
@@ -217,7 +260,8 @@ func (p *packument) filter(allowed func(string) bool, tarballBase, registryPath 
 	if err != nil {
 		return nil, err
 	}
-	return &rewritten{body: b, tags: p.doc["dist-tags"], upstreamTags: p.distTags, ok: true}, nil
+	size := int64(len(b)+len(p.doc["dist-tags"])) + releaseOverhead*int64(len(kept))
+	return &rewritten{body: b, tags: p.doc["dist-tags"], upstreamTags: p.distTags, ok: true, size: size}, nil
 }
 
 // latest returns the version the latest tag names, or the highest version

@@ -200,3 +200,34 @@ func TestDocumentOverHalfTheCacheBudgetIsNotCached(t *testing.T) {
 		t.Errorf("upstream calls %v, want the small document cached and the large one fetched each time", calls)
 	}
 }
+
+func TestKeptValuesShareTheMetadataBudget(t *testing.T) {
+	calls := 0
+	u := NewUpstream(&http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		calls++
+		return okResponse(r)
+	})}, "pkgwarden-test", time.Minute, 1000)
+	const url = "https://registry.example/left-pad"
+	fetch := func() {
+		if _, err := u.Fetch(context.Background(), url, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	fetch()
+	if _, ok := u.Kept(" " + url); ok {
+		t.Error("Kept returned a fetched document")
+	}
+	u.Keep(" "+url, "derived", 100)
+	fetch()
+	if v, ok := u.Kept(" " + url); !ok || v != "derived" {
+		t.Errorf("Kept = %v, %v; want the kept value", v, ok)
+	}
+	if calls != 1 {
+		t.Errorf("%d upstream calls, want the document and the kept value cached side by side", calls)
+	}
+	u.Keep("huge", "derived", 600)
+	if _, ok := u.Kept("huge"); ok {
+		t.Error("kept a value weighing over half the metadata budget")
+	}
+}

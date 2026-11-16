@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -577,5 +578,102 @@ func TestPackageWhenDownloadCountsHang(t *testing.T) {
 	}
 	if pkg.WeeklyDownloads != policy.UnknownDownloads || len(pkg.Releases) == 0 {
 		t.Errorf("downloads %d with %d releases, want UnknownDownloads and the packument's releases", pkg.WeeklyDownloads, len(pkg.Releases))
+	}
+}
+
+type changingSource struct {
+	mu         sync.Mutex
+	advisories []advisory.Advisory
+}
+
+func (s *changingSource) Lookup(context.Context, ecosystem.Ecosystem, string) ([]advisory.Advisory, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.advisories, nil
+}
+
+func (s *changingSource) set(a ...advisory.Advisory) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.advisories = a
+}
+
+func TestPackumentFollowsPolicyAndUpstreamChangesAtOnce(t *testing.T) {
+	const cooldown, metadataTTL = time.Hour, 1500 * time.Millisecond
+	start := time.Now()
+	ripens := start.Add(500 * time.Millisecond)
+	var mu sync.Mutex
+	published := map[string]time.Time{"1.0.0": old, "1.1.0": ripens.Add(-cooldown)}
+	var fetches atomic.Int32
+	var upstream *httptest.Server
+	upstream = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/p":
+			fetches.Add(1)
+			mu.Lock()
+			defer mu.Unlock()
+			versions, times := map[string]any{}, map[string]string{"created": old.Format(npmTime)}
+			for v, at := range published {
+				versions[v] = map[string]any{"name": "p", "version": v, "dist": map[string]string{"tarball": upstream.URL + "/p/-/p-" + v + ".tgz"}}
+				times[v] = at.UTC().Format(npmTime)
+			}
+			json.NewEncoder(w).Encode(map[string]any{"name": "p", "dist-tags": map[string]string{"latest": "1.0.0"}, "versions": versions, "time": times})
+		case strings.HasSuffix(r.URL.Path, ".tgz"):
+			w.Write(tarballBytes(r.URL.Path))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(upstream.Close)
+	src := &changingSource{}
+	engine := policy.New(policy.Config{Cooldown: cooldown}, src)
+	reg := npm.New(npm.Options{
+		Registry:  upstream.URL,
+		Downloads: upstream.URL,
+		Engine:    engine,
+		HTTP:      proxy.NewUpstream(http.DefaultClient, "pkgwarden-test", metadataTTL, 64<<20),
+	})
+	srv := httptest.NewServer(proxy.NewServer(engine, reg))
+	t.Cleanup(srv.Close)
+
+	check := func(when string, want ...string) {
+		t.Helper()
+		resp, body := get(t, srv.URL+"/npm/p")
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("%s: status %d: %s", when, resp.StatusCode, body)
+		}
+		var doc packumentView
+		if err := json.Unmarshal(body, &doc); err != nil {
+			t.Fatal(err)
+		}
+		if got := slices.Sorted(maps.Keys(doc.Versions)); !slices.Equal(got, want) {
+			t.Errorf("%s: versions = %v, want %v", when, got, want)
+		}
+	}
+
+	cachePackumentBeforeAnyRewrite := func() {
+		if resp, body := get(t, srv.URL+"/npm/p/-/p-1.0.0.tgz"); resp.StatusCode != http.StatusOK {
+			t.Fatalf("tarball: status %d: %s", resp.StatusCode, body)
+		}
+	}
+	cachePackumentBeforeAnyRewrite()
+	check("in cooldown", "1.0.0")
+	time.Sleep(time.Until(ripens.Add(300 * time.Millisecond)))
+	check("out of cooldown", "1.0.0", "1.1.0")
+	src.set(advisory.Advisory{ID: "MAL-2026-1", Source: "openssf", Kind: advisory.Malicious, Versions: []string{"1.1.0"}})
+	check("newly malicious", "1.0.0")
+	src.set()
+	check("advisory withdrawn", "1.0.0", "1.1.0")
+	if n := fetches.Load(); n != 1 {
+		t.Errorf("upstream served the packument %d times before its TTL ran out, want 1", n)
+	}
+
+	mu.Lock()
+	published["1.2.0"] = old
+	mu.Unlock()
+	time.Sleep(time.Until(start.Add(metadataTTL + 300*time.Millisecond)))
+	check("after the metadata TTL", "1.0.0", "1.1.0", "1.2.0")
+	if n := fetches.Load(); n != 2 {
+		t.Errorf("upstream served the packument %d times, want 2", n)
 	}
 }

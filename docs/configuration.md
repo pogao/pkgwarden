@@ -33,6 +33,8 @@ This is the output of `env -u GITHUB_TOKEN go run ./cmd/pkgwarden -h 2>&1` at th
 	    	debug, info, warn or error (default INFO)
 	  -low-downloads int
 	    	weekly downloads below this count as unpopular (default 100)
+	  -max-in-flight int
+	    	most requests in progress at once; past it, requests get 503 with Retry-After (0 disables the limit) (default 4608)
 	  -metadata-cache-bytes int
 	    	most bytes of upstream metadata the cache holds (0 disables it) (default 268435456)
 	  -metadata-ttl duration
@@ -50,7 +52,7 @@ This is the output of `env -u GITHUB_TOKEN go run ./cmd/pkgwarden -h 2>&1` at th
 	  -public-url string
 	    	externally visible base URL, used in rewritten download links (default: derived from each request)
 
-There are 21 flags. To count them, run this:
+There are 22 flags. To count them, run this:
 
 	go run ./cmd/pkgwarden -h 2>&1 | grep -c '^  -'
 
@@ -94,6 +96,7 @@ A command-line flag replaces the environment value. It does not add to it. `-all
 | `-listen` | string | `:8080` | `PKGWARDEN_LISTEN` |
 | `-log-level` | level | `info` | `PKGWARDEN_LOG_LEVEL` |
 | `-low-downloads` | int | `100` | `PKGWARDEN_LOW_DOWNLOADS` |
+| `-max-in-flight` | int | `4608` | `PKGWARDEN_MAX_IN_FLIGHT` |
 | `-metadata-cache-bytes` | int | `268435456` (256 MiB) | `PKGWARDEN_METADATA_CACHE_BYTES` |
 | `-metadata-ttl` | duration | `5m0s` | `PKGWARDEN_METADATA_TTL` |
 | `-metrics-listen` | string | empty, `/metrics` is served on `-listen` | `PKGWARDEN_METRICS_LISTEN` |
@@ -114,6 +117,12 @@ The TCP address the HTTP server listens on, in Go's `host:port` form. `:8080` li
 The TCP address of a second HTTP listener that serves only `GET /metrics`, in the same form as `-listen`. When it is set, the main listener answers 404 for `/metrics`. When it is empty, the main listener serves `/metrics` next to `/healthz`. On shutdown, the metrics listener keeps serving until the requests on the main listener finish. See [Metrics and request tracing](observability.md).
 
 `/metrics` has no authentication. To keep it away from the clients that reach `-listen`, bind `-metrics-listen` to an address only your monitoring can reach, such as `127.0.0.1:9090` or an internal interface.
+
+### `-max-in-flight`
+
+The most requests pkgwarden works on at once. A request past the limit gets 503 with `Retry-After: 1` and a plain-text body, and pkgwarden closes its connection. pkgwarden does not queue it. npm retries a request that gets 503, twice by default (`fetch-retries`), so a short burst past the limit costs retries. pkgwarden does not count `/healthz` or the `/metrics` endpoint, and it never refuses them. `0` turns the limit off. A negative value is rejected.
+
+Each request in progress holds memory for its connection. The limit caps that memory, so that a burst of clients cannot take the container past its memory limit. A request holds its place until its response is sent, so a slow download counts for as long as it takes. The default of 4608 fits a 2 GiB container with `GOMEMLIMIT=1000MiB`. To size the limit for your container, see [Give it enough memory](deployment.md#give-it-enough-memory). The `pkgwarden_http_requests_in_flight` gauge and the `pkgwarden_http_requests_refused_total` counter show how close pkgwarden runs to the limit. See [Metric reference](observability.md#metric-reference).
 
 ### `-public-url`
 
@@ -233,6 +242,7 @@ pkgwarden checks its configuration before it listens. Each error below was captu
 | `-cooldown 7d` | `invalid value "7d" for flag -cooldown: parse error`, the help text, then `pkgwarden: invalid value "7d" for flag -cooldown: parse error` | 2 |
 | `PKGWARDEN_COOLDOWN=abc` | `pkgwarden: PKGWARDEN_COOLDOWN: parse error` | 2 |
 | `-cooldown -1s` | `pkgwarden: -cooldown must not be negative` | 2 |
+| `-max-in-flight -1` | `pkgwarden: -max-in-flight must not be negative` | 2 |
 | `-heuristics-warn 80` | `pkgwarden: -heuristics-warn (80) must not exceed -heuristics-block (70)` | 2 |
 | `-allow foo` | `pkgwarden: -allow entry "foo": want ecosystem:name` | 2 |
 | `-allow npm:` | `pkgwarden: -allow entry "npm:": want ecosystem:name` | 2 |
