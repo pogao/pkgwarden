@@ -361,11 +361,16 @@ func (h *host) settle(c *conn, resp *http.Response, err error) *http.Response {
 
 // streamLimitLocked reads Available plus InFlight. A stream can finish
 // between the reads, but with host.mu held none can start, so two equal
-// InFlight reads bracket a stable count.
+// InFlight reads bracket a stable count. net/http reports Available as 0
+// once a connection takes no new streams, as after GOAWAY, so the limit is
+// then unknown and streamLimitLocked returns 0.
 func (h *host) streamLimitLocked(cc *http.ClientConn) int {
 	for {
 		f := cc.InFlight()
 		a := cc.Available()
+		if a == 0 {
+			return 0
+		}
 		if cc.InFlight() == f {
 			return a + f
 		}
