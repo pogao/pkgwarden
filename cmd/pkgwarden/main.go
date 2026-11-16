@@ -6,6 +6,7 @@ package main
 import (
 	"cmp"
 	"context"
+	"crypto/tls"
 	"errors"
 	"flag"
 	"fmt"
@@ -19,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pogao/pkgwarden/internal/advisory"
+	"github.com/pogao/pkgwarden/internal/connpool"
 	"github.com/pogao/pkgwarden/internal/policy"
 	"github.com/pogao/pkgwarden/internal/proxy"
 	"github.com/pogao/pkgwarden/internal/proxy/cargo"
@@ -50,15 +52,7 @@ func main() {
 func run(ctx context.Context, cfg *config) error {
 	slog.SetDefault(slog.New(telemetry.NewLogHandler(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: cfg.logLevel}))))
 
-	client := &http.Client{Transport: telemetry.Transport(&http.Transport{
-		Proxy:                 http.ProxyFromEnvironment,
-		DialContext:           (&net.Dialer{Timeout: 10 * time.Second}).DialContext,
-		ForceAttemptHTTP2:     true,
-		MaxIdleConnsPerHost:   32,
-		IdleConnTimeout:       90 * time.Second,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ResponseHeaderTimeout: 60 * time.Second,
-	})}
+	client := upstreamClient(nil)
 
 	sources := []advisory.Source{advisory.NewOSV(client, cfg.osvURL)}
 	if cfg.ghsaToken != "" {
@@ -138,6 +132,19 @@ func run(ctx context.Context, cfg *config) error {
 		}
 	}
 	return err
+}
+
+func upstreamClient(testTLS *tls.Config) *http.Client {
+	return &http.Client{Transport: telemetry.Transport(connpool.New(&http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
+		DialContext:           (&net.Dialer{Timeout: 10 * time.Second}).DialContext,
+		TLSClientConfig:       testTLS,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConnsPerHost:   32,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: 60 * time.Second,
+	}))}
 }
 
 // handlers wraps app for the main listener. With separateMetrics it also
